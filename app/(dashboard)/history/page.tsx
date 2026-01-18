@@ -48,7 +48,9 @@ const isTaskVideoType = (type: string) => type?.includes('video');
 
 const TYPE_BADGE_MAP: Record<string, { label: string; icon: any }> = {
   'sora-video': { label: 'Sora 视频', icon: Video },
+  'flow-video': { label: 'Flow Video', icon: Video },
   'sora-image': { label: 'Sora 图像', icon: ImageIcon },
+  'flow-image': { label: 'Flow Image', icon: ImageIcon },
   'gemini-image': { label: 'Gemini', icon: Palette },
   'zimage-image': { label: 'Z-Image', icon: ImageIcon },
   'gitee-image': { label: 'Gitee', icon: ImageIcon },
@@ -61,7 +63,7 @@ const IMAGE_MODEL_LABELS = new Map(
 
 const getTypeBadge = (type: string) => TYPE_BADGE_MAP[type] || { label: type, icon: Palette };
 const getGenerationBadge = (gen: Generation) => {
-  if (gen.type === 'gemini-image' || gen.type === 'zimage-image' || gen.type === 'gitee-image') {
+  if (gen.type === 'gemini-image' || gen.type === 'zimage-image' || gen.type === 'gitee-image' || gen.type === 'flow-image') {
     const modelLabel = gen.params?.model ? IMAGE_MODEL_LABELS.get(gen.params.model) : undefined;
     if (modelLabel) {
       return { label: modelLabel, icon: ImageIcon };

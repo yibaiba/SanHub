@@ -9,7 +9,16 @@
 export type UserRole = 'user' | 'admin' | 'moderator';
 
 // 生成类型
-export type GenerationType = 'sora-video' | 'sora-image' | 'gemini-image' | 'zimage-image' | 'gitee-image' | 'chat' | 'character-card';
+export type GenerationType =
+  | 'sora-video'
+  | 'flow-video'
+  | 'sora-image'
+  | 'flow-image'
+  | 'gemini-image'
+  | 'zimage-image'
+  | 'gitee-image'
+  | 'chat'
+  | 'character-card';
 
 // 聊天模型配置
 export interface ChatModel {
@@ -159,7 +168,7 @@ export interface ModelDisabledConfig {
 // ========================================
 
 // 渠道类型 - 决定请求方式
-export type ChannelType = 'openai-compatible' | 'openai-chat' | 'modelscope' | 'gitee' | 'gemini' | 'sora';
+export type ChannelType = 'openai-compatible' | 'openai-chat' | 'modelscope' | 'gitee' | 'gemini' | 'sora' | 'flow';
 
 // 模型功能特性
 export interface ImageModelFeatures {

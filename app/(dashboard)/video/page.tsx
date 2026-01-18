@@ -425,7 +425,7 @@ export default function VideoGenerationPage() {
         if (res.ok) {
           const data = await res.json();
           const videoTasks: Task[] = (data.data || [])
-            .filter((t: any) => t.type === 'sora-video' || t.type === 'video')
+            .filter((t: any) => t.type === 'sora-video' || t.type === 'flow-video' || t.type === 'video')
             .map((t: any) => ({
               id: t.id,
               prompt: t.prompt,
@@ -571,23 +571,29 @@ export default function VideoGenerationPage() {
   };
 
   // 构建模型 ID（用于 Sora 类型）
-  const buildModelId = (ratio: string, dur: string): string => {
-    return `sora2-${ratio}-${dur}`;
+  const resolveModelId = (): string => {
+    return currentModel?.id || selectedModelId || '';
   };
 
   // 单次提交任务的核心函数
   const submitSingleTask = async (
     taskPrompt: string,
-    taskModel: string,
     taskFiles: { mimeType: string; data: string }[],
     options?: { remixTargetId?: string; styleId?: string }
   ) => {
+    const modelId = resolveModelId();
+    if (!modelId) {
+      throw new Error('Video model is required');
+    }
+
     const res = await fetch('/api/generate/sora', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: taskModel,
+        modelId,
         prompt: taskPrompt,
+        aspectRatio,
+        duration,
         files: taskFiles,
         remix_target_id: options?.remixTargetId,
         style_id: options?.styleId,
@@ -597,14 +603,15 @@ export default function VideoGenerationPage() {
     const data = await res.json();
 
     if (!res.ok) {
-      throw new Error(data.error || '生成失败');
+      throw new Error(data.error || 'Video generation failed');
     }
 
+    const taskType = data.data?.type || 'sora-video';
     const newTask: Task = {
       id: data.data.id,
       prompt: taskPrompt,
-      model: taskModel,
-      type: 'sora-video',
+      model: modelId,
+      type: taskType,
       status: 'pending',
       createdAt: Date.now(),
     };
@@ -625,7 +632,6 @@ export default function VideoGenerationPage() {
     setSubmitting(true);
 
     const taskPrompt = buildPrompt();
-    const taskModel = buildModelId(aspectRatio, duration);
     const taskFiles = await buildFiles();
 
     const remixTargetId = extractRemixTargetId();
@@ -633,7 +639,7 @@ export default function VideoGenerationPage() {
     const styleId = creationMode === 'normal' ? selectedStyle || undefined : undefined;
 
     try {
-      await submitSingleTask(taskPrompt, taskModel, taskFiles, { remixTargetId, styleId });
+      await submitSingleTask(taskPrompt, taskFiles, { remixTargetId, styleId });
 
       toast({
         title: '任务已提交',
@@ -677,7 +683,6 @@ export default function VideoGenerationPage() {
     setSubmitting(true);
 
     const taskPrompt = buildPrompt();
-    const taskModel = buildModelId(aspectRatio, duration);
     const taskFiles = await buildFiles();
     const remixTargetId = extractRemixTargetId();
     const styleId = creationMode === 'normal' ? selectedStyle || undefined : undefined;
@@ -685,7 +690,7 @@ export default function VideoGenerationPage() {
     try {
       // 连续提交3个任务
       for (let i = 0; i < 3; i++) {
-        await submitSingleTask(taskPrompt, taskModel, taskFiles, { remixTargetId, styleId });
+        await submitSingleTask(taskPrompt, taskFiles, { remixTargetId, styleId });
       }
 
       toast({

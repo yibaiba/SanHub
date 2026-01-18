@@ -895,14 +895,17 @@ export default function WorkspaceEditorPage() {
         updateNodeData(node.id, { status: 'pending', errorMessage: undefined });
         
         const model = videoModels.find(m => m.id === node.data.modelId) || videoModels[0];
-        const taskModel = `sora-video-${node.data.aspectRatio || model?.defaultAspectRatio || 'landscape'}-${node.data.duration || model?.defaultDuration || '10s'}`;
-        
+        if (!model) {
+          updateNodeData(node.id, { errorMessage: 'No video model available', status: 'failed' });
+          return;
+        }
+
         // Find image input node for reference image
         const videoInputEdge = edgesRef.current.find((edge) => edge.to === node.id);
         const videoInputNode = videoInputEdge
           ? nodesRef.current.find((n) => n.id === videoInputEdge.from && n.type === 'image')
           : undefined;
-        
+
         let referenceImageUrl = videoInputNode?.data.outputUrl;
         if (!referenceImageUrl && node.data.uploadedImages && node.data.uploadedImages.length > 0) {
           referenceImageUrl = node.data.uploadedImages[0];
@@ -912,11 +915,14 @@ export default function WorkspaceEditorPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: taskModel,
+            modelId: model.id,
             prompt: basePrompt,
+            aspectRatio: node.data.aspectRatio || model.defaultAspectRatio,
+            duration: node.data.duration || model.defaultDuration,
             ...(referenceImageUrl ? { referenceImageUrl } : {}),
           }),
         });
+
         const data = await res.json();
         if (!res.ok) {
           throw new Error(data.error || '生成失败');

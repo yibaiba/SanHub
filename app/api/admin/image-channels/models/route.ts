@@ -186,8 +186,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Channel has no baseUrl configured' }, { status: 400 });
     }
 
-    // Only support openai-chat and openai-compatible types
-    if (channel.type !== 'openai-chat' && channel.type !== 'openai-compatible') {
+    // Only support openai-chat/openai-compatible/flow types
+    if (channel.type !== 'openai-chat' && channel.type !== 'openai-compatible' && channel.type !== 'flow') {
       return NextResponse.json(
         { error: 'This channel type does not support fetching remote models' },
         { status: 400 }

@@ -11,6 +11,7 @@ import type { ImageChannel, ImageModel, ChannelType, ImageModelFeatures } from '
 const CHANNEL_TYPES: { value: ChannelType; label: string; description: string }[] = [
   { value: 'openai-compatible', label: 'OpenAI Images', description: 'OpenAI /v1/images/generations API' },
   { value: 'openai-chat', label: 'OpenAI Chat', description: 'OpenAI /v1/chat/completions API' },
+  { value: 'flow', label: 'Flow', description: 'Flow /v1/chat/completions API' },
   { value: 'gemini', label: 'Gemini', description: 'Google Gemini Native API' },
   { value: 'modelscope', label: 'ModelScope', description: 'ModelScope API' },
   { value: 'gitee', label: 'Gitee AI', description: 'Gitee AI API' },
@@ -1160,7 +1161,7 @@ export default function ImageChannelsPage() {
                       <button onClick={() => startAddModel(channel.id)} className="p-2 text-foreground/40 hover:text-green-400 hover:bg-green-500/10 rounded-lg" title="Add model manually">
                         <Plus className="w-4 h-4" />
                       </button>
-                      {(channel.type === 'openai-chat' || channel.type === 'openai-compatible') && (
+                      {(channel.type === 'openai-chat' || channel.type === 'openai-compatible' || channel.type === 'flow') && (
                         <button
                           onClick={() => fetchRemoteModels(channel.id)}
                           disabled={fetchingRemoteModels}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateWithSora } from '@/lib/sora';
+import { generateFlowVideoByModel } from '@/lib/video-generator';
 import { generateImage, type ImageGenerateRequest } from '@/lib/image-generator';
 import { getImageModels, getImageChannels, getSystemConfig, getVideoChannel, getVideoChannels } from '@/lib/db';
 import { fetchWithRetry } from '@/lib/http-retry';
@@ -32,8 +33,27 @@ type ChatMessage = {
 function isLikelyVideoModel(model: string): boolean {
   const value = model.toLowerCase();
   if (value.includes('image')) return false;
-  const markers = ['sora2', 'sora-2', 'video', 'landscape', 'portrait', '10s', '15s', '25s'];
+  const markers = [
+    'sora2',
+    'sora-2',
+    'video',
+    'landscape',
+    'portrait',
+    '10s',
+    '15s',
+    '25s',
+    'veo',
+    't2v',
+    'i2v',
+    'r2v',
+  ];
   return markers.some((marker) => value.includes(marker));
+}
+
+function isLikelyFlowVideoModel(model: string): boolean {
+  const value = model.toLowerCase();
+  if (value.includes('image')) return false;
+  return value.includes('veo') || value.includes('t2v') || value.includes('i2v') || value.includes('r2v');
 }
 
 function shouldUseOpenAiStream(body: Record<string, unknown>, model: string, streamEnabled: boolean): boolean {
@@ -180,12 +200,31 @@ async function resolveVideoChatConfig(channelId?: string): Promise<{ apiKey: str
       channel.baseUrl
   );
   if (candidates.length > 0) {
-    const preferred = candidates.find((channel) => channel.type === 'openai-compatible') || candidates[0];
+    const preferred =
+      candidates.find((channel) => channel.type === 'openai-compatible') ||
+      candidates[0];
     return { apiKey: preferred.apiKey, baseUrl: preferred.baseUrl };
   }
 
   const config = await getSystemConfig();
   return { apiKey: config.soraApiKey || '', baseUrl: config.soraBaseUrl || '' };
+}
+
+async function resolveFlowChatConfig(channelId?: string): Promise<{ apiKey: string; baseUrl: string }> {
+  if (channelId) {
+    const channel = await getVideoChannel(channelId);
+    if (channel && channel.type === 'flow' && channel.apiKey && channel.baseUrl) {
+      return { apiKey: channel.apiKey, baseUrl: channel.baseUrl };
+    }
+  }
+
+  const channels = await getVideoChannels(true);
+  const candidate = channels.find((channel) => channel.type === 'flow' && channel.apiKey && channel.baseUrl);
+  if (candidate) {
+    return { apiKey: candidate.apiKey, baseUrl: candidate.baseUrl };
+  }
+
+  return { apiKey: '', baseUrl: '' };
 }
 
 function isSameOrigin(left: string, right: string): boolean {
@@ -412,6 +451,94 @@ export async function POST(request: NextRequest) {
     if (referenceImage) {
       const imageSource = await loadImageSource(referenceImage, origin);
       fileList.push({ mimeType: imageSource.mimeType, data: imageSource.data });
+    }
+
+    if (isLikelyFlowVideoModel(model)) {
+      const requestedChannelId = typeof payload?.channel_id === 'string' ? payload.channel_id : undefined;
+      const { apiKey, baseUrl } = await resolveFlowChatConfig(requestedChannelId);
+      if (!apiKey || !baseUrl) {
+        return buildErrorResponse('Flow API Key or Base URL is not configured', 500, 'server_error');
+      }
+
+      if (!streamEnabled) {
+        try {
+          const result = await generateFlowVideoByModel({
+            model,
+            prompt,
+            images: fileList,
+            baseUrl,
+            apiKey,
+          });
+          const content = buildChatResponseContent('video', result.url);
+          return NextResponse.json({
+            id: completionId,
+            object: 'chat.completion',
+            created,
+            model,
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content,
+                },
+                finish_reason: 'stop',
+              },
+            ],
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Video generation failed';
+          return buildErrorResponse(message, 500, 'server_error');
+        }
+      }
+
+      const streamResponse = new ReadableStream({
+        async start(controller) {
+          const encoder = new TextEncoder();
+          const send = (payload: unknown) => {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+          };
+          const sendDone = () => {
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          };
+
+          try {
+            const result = await generateFlowVideoByModel({
+              model,
+              prompt,
+              images: fileList,
+              baseUrl,
+              apiKey,
+            });
+            const content = buildChatResponseContent('video', result.url);
+            send(
+              buildChatChunk({
+                id: completionId,
+                model,
+                created,
+                delta: { content },
+                finishReason: 'stop',
+              })
+            );
+            sendDone();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'Video generation failed';
+            send({ error: { message, type: 'server_error' } });
+            sendDone();
+          } finally {
+            controller.close();
+          }
+        },
+      });
+
+      return new NextResponse(streamResponse, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        },
+      });
     }
 
     if (!streamEnabled) {

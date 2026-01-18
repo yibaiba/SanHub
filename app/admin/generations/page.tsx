@@ -24,12 +24,14 @@ interface GenerationRecord {
 }
 
 const TYPE_OPTIONS = [
-  { value: '', label: '全部类型' },
-  { value: 'sora-video', label: '视频' },
-  { value: 'sora-image', label: 'Sora 图像' },
-  { value: 'gemini-image', label: 'Gemini 图像' },
-  { value: 'zimage-image', label: 'Z-Image 图像' },
-  { value: 'gitee-image', label: 'Gitee 图像' },
+  { value: '', label: 'All Types' },
+  { value: 'sora-video', label: 'Video' },
+  { value: 'flow-video', label: 'Flow Video' },
+  { value: 'sora-image', label: 'Sora Image' },
+  { value: 'flow-image', label: 'Flow Image' },
+  { value: 'gemini-image', label: 'Gemini Image' },
+  { value: 'zimage-image', label: 'Z-Image' },
+  { value: 'gitee-image', label: 'Gitee Image' },
 ];
 
 const STATUS_OPTIONS = [
@@ -46,18 +48,21 @@ const IMAGE_MODEL_LABELS = new Map(
 );
 
 const TYPE_LABELS: Record<string, string> = {
-  'sora-video': '视频',
-  'sora-image': 'Sora 图像',
-  'gemini-image': 'Gemini 图像',
-  'zimage-image': 'Z-Image 图像',
-  'gitee-image': 'Gitee 图像',
+  'sora-video': 'Video',
+  'flow-video': 'Flow Video',
+  'sora-image': 'Sora Image',
+  'flow-image': 'Flow Image',
+  'gemini-image': 'Gemini Image',
+  'zimage-image': 'Z-Image',
+  'gitee-image': 'Gitee Image',
 };
 
 function getRecordTypeLabel(record: GenerationRecord): string {
   if (
     record.type === 'gemini-image' ||
     record.type === 'zimage-image' ||
-    record.type === 'gitee-image'
+    record.type === 'gitee-image' ||
+    record.type === 'flow-image'
   ) {
     const modelLabel = record.params?.model
       ? IMAGE_MODEL_LABELS.get(record.params.model)

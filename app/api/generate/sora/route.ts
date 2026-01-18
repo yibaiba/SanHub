@@ -3,8 +3,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { generateWithSora } from '@/lib/sora';
-import { saveGeneration, updateUserBalance, getUserById, updateGeneration, getSystemConfig, refundGenerationBalance } from '@/lib/db';
-import type { Generation, SoraGenerateRequest } from '@/types';
+import { generateVideo, type VideoGenerateRequest } from '@/lib/video-generator';
+import {
+  saveGeneration,
+  updateUserBalance,
+  getUserById,
+  updateGeneration,
+  getSystemConfig,
+  refundGenerationBalance,
+  getVideoModelWithChannel,
+} from '@/lib/db';
+import type { Generation, GenerationType, SoraGenerateRequest } from '@/types';
 import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
 import { fetchExternalBuffer } from '@/lib/safe-fetch';
 
@@ -154,6 +163,91 @@ async function processGenerationTask(
   }
 }
 
+type VideoGeneratePayload = {
+  modelId?: string;
+  model?: string;
+  prompt?: string;
+  aspectRatio?: string;
+  duration?: string;
+  files?: { mimeType: string; data: string }[];
+  referenceImageUrl?: string;
+  style_id?: string;
+  remix_target_id?: string;
+};
+
+async function processVideoTask(
+  generationId: string,
+  userId: string,
+  request: VideoGenerateRequest,
+  meta: { modelId: string; apiModel: string; aspectRatio: string; duration: string },
+  prechargedCost: number
+): Promise<void> {
+  try {
+    await updateGeneration(generationId, { status: 'processing' }).catch((err) => {
+      console.error(`[Task ${generationId}] Failed to update status:`, err);
+    });
+
+    let lastProgress = 0;
+    const onProgress = async (progress: number) => {
+      if (progress - lastProgress >= 5 || progress >= 100) {
+        lastProgress = progress;
+        await updateGeneration(generationId, {
+          params: {
+            modelId: meta.modelId,
+            model: meta.apiModel,
+            aspectRatio: meta.aspectRatio,
+            duration: meta.duration,
+            progress,
+          },
+        }).catch((err) => {
+          console.error(`[Task ${generationId}] Failed to update progress:`, err);
+        });
+      }
+    };
+
+    const result = await generateVideo(request, onProgress);
+
+    await updateGeneration(generationId, {
+      status: 'completed',
+      resultUrl: result.url,
+      params: {
+        modelId: meta.modelId,
+        model: meta.apiModel,
+        aspectRatio: meta.aspectRatio,
+        duration: meta.duration,
+        videoId: result.videoId,
+        videoChannelId: result.videoChannelId,
+        permalink: result.permalink,
+        revised_prompt: result.revised_prompt,
+      },
+    }).catch((err) => {
+      console.error(`[Task ${generationId}] Failed to update completion:`, err);
+    });
+  } catch (error) {
+    console.error(`[Task ${generationId}] Video task failed:`, error);
+
+    let errorMessage = 'Video generation failed';
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    }
+
+    try {
+      await updateGeneration(generationId, {
+        status: 'failed',
+        errorMessage,
+      });
+    } catch (updateErr) {
+      console.error(`[Task ${generationId}] Failed to update failure status:`, updateErr);
+    }
+
+    try {
+      await refundGenerationBalance(generationId, userId, prechargedCost);
+    } catch (refundErr) {
+      console.error(`[Task ${generationId}] Refund failed:`, refundErr);
+    }
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const rateLimit = checkRateLimit(request, RateLimitConfig.GENERATE, 'generate-sora-video');
@@ -170,26 +264,151 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '请先登录' }, { status: 401 });
     }
 
-    const body: SoraGenerateRequest = await request.json();
-    const hasPrompt = Boolean(body.prompt && body.prompt.trim());
-    const hasFiles = Boolean(body.files && body.files.length > 0);
-    const hasReferenceUrl = Boolean(body.referenceImageUrl);
+    const body: VideoGeneratePayload = await request.json();
+    const hasModelId = typeof body.modelId === 'string' && body.modelId.trim().length > 0;
+
+    const origin = new URL(request.url).origin;
+    const normalizedFiles = body.files ? [...body.files] : [];
+    if (body.referenceImageUrl) {
+      const file = await fetchImageAsBase64(body.referenceImageUrl, origin);
+      normalizedFiles.push(file);
+    }
+
+    if (hasModelId) {
+      const modelId = body.modelId!.trim();
+      const modelConfig = await getVideoModelWithChannel(modelId);
+      if (!modelConfig) {
+        return NextResponse.json({ error: 'Video model not found' }, { status: 404 });
+      }
+      const { model, channel } = modelConfig;
+      if (!model.enabled) {
+        return NextResponse.json({ error: 'Video model is disabled' }, { status: 400 });
+      }
+      if (!channel.enabled) {
+        return NextResponse.json({ error: 'Video channel is disabled' }, { status: 400 });
+      }
+
+      const prompt = (body.prompt || '').trim();
+      const hasPrompt = Boolean(prompt);
+      const hasFiles = normalizedFiles.length > 0;
+
+      if (!hasPrompt && !hasFiles) {
+        return NextResponse.json(
+          { error: 'Prompt or reference images are required' },
+          { status: 400 }
+        );
+      }
+
+      const aspectRatio = body.aspectRatio || model.defaultAspectRatio;
+      const duration = body.duration || model.defaultDuration;
+      const durationCost = model.durations.find((d) => d.value === duration)?.cost;
+      const estimatedCost = typeof durationCost === 'number'
+        ? durationCost
+        : model.durations[0]?.cost || 0;
+
+      const user = await getUserById(session.user.id);
+      if (!user) {
+        return NextResponse.json({ error: 'User not found' }, { status: 401 });
+      }
+
+      if (user.balance < estimatedCost) {
+        return NextResponse.json(
+          { error: `Insufficient balance. Need at least ${estimatedCost}.` },
+          { status: 402 }
+        );
+      }
+
+      try {
+        await updateUserBalance(user.id, -estimatedCost, 'strict');
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Insufficient balance';
+        if (message.includes('Insufficient balance')) {
+          return NextResponse.json(
+            { error: `Insufficient balance. Need at least ${estimatedCost}.` },
+            { status: 402 }
+          );
+        }
+        throw err;
+      }
+
+      const generationType: GenerationType = channel.type === 'flow' ? 'flow-video' : 'sora-video';
+
+      let generation: Generation;
+      try {
+        generation = await saveGeneration({
+          userId: user.id,
+          type: generationType,
+          prompt,
+          params: {
+            modelId,
+            model: model.apiModel,
+            aspectRatio,
+            duration,
+            imageCount: normalizedFiles.length,
+          },
+          resultUrl: '',
+          cost: estimatedCost,
+          status: 'pending',
+          balancePrecharged: true,
+          balanceRefunded: false,
+        });
+      } catch (saveErr) {
+        await updateUserBalance(user.id, estimatedCost, 'strict').catch((refundErr) => {
+          console.error('[API] Precharge rollback failed:', refundErr);
+        });
+        throw saveErr;
+      }
+
+      const videoRequest: VideoGenerateRequest = {
+        modelId,
+        prompt,
+        aspectRatio,
+        duration,
+        files: normalizedFiles,
+        styleId: body.style_id,
+        remixTargetId: body.remix_target_id,
+      };
+
+      processVideoTask(
+        generation.id,
+        user.id,
+        videoRequest,
+        { modelId, apiModel: model.apiModel, aspectRatio, duration },
+        estimatedCost
+      ).catch((err) => {
+        console.error('[API] Video task start failed:', err);
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          id: generation.id,
+          status: 'pending',
+          type: generation.type,
+          message: 'Task created. Processing in background.',
+        },
+      });
+    }
+
+    const legacyBody = body as SoraGenerateRequest;
+    const hasPrompt = Boolean(legacyBody.prompt && legacyBody.prompt.trim());
+    const hasFiles = Boolean(legacyBody.files && legacyBody.files.length > 0);
+    const hasReferenceUrl = Boolean(legacyBody.referenceImageUrl);
 
     if (!hasPrompt && !hasFiles && !hasReferenceUrl) {
       return NextResponse.json(
-        { error: '请输入提示词或上传参考文件' },
+        { error: 'Prompt or reference images are required' },
         { status: 400 }
       );
     }
 
-    const origin = new URL(request.url).origin;
     const normalizedBody: SoraGenerateRequest = {
-      ...body,
-      files: body.files ? [...body.files] : [],
+      ...legacyBody,
+      files: legacyBody.files ? [...legacyBody.files] : [],
     };
 
-    if (body.referenceImageUrl) {
-      const file = await fetchImageAsBase64(body.referenceImageUrl, origin);
+    if (legacyBody.referenceImageUrl) {
+      const file = await fetchImageAsBase64(legacyBody.referenceImageUrl, origin);
       normalizedBody.files?.push(file);
     }
 
@@ -201,9 +420,11 @@ export async function POST(request: NextRequest) {
 
     // 预估成本
     const config = await getSystemConfig();
-    const estimatedCost = body.model.includes('15s')
-      ? config.pricing.soraVideo15s
-      : config.pricing.soraVideo10s;
+    const estimatedCost = legacyBody.model.includes('25s')
+      ? config.pricing.soraVideo25s
+      : legacyBody.model.includes('15s')
+        ? config.pricing.soraVideo15s
+        : config.pricing.soraVideo10s;
 
     // 检查余额
     if (user.balance < estimatedCost) {
@@ -235,8 +456,8 @@ export async function POST(request: NextRequest) {
       generation = await saveGeneration({
         userId: user.id,
         type,
-        prompt: body.prompt || '',
-        params: { model: body.model },
+        prompt: legacyBody.prompt || '',
+        params: { model: legacyBody.model },
         resultUrl: '',
         cost: estimatedCost,
         status: 'pending',
@@ -261,6 +482,7 @@ export async function POST(request: NextRequest) {
       data: {
         id: generation.id,
         status: 'pending',
+        type,
         message: '任务已创建，正在后台处理中',
       },
     });

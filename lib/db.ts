@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS generations (
   id VARCHAR(36) PRIMARY KEY,
   user_id VARCHAR(36) NOT NULL,
-  type ENUM('sora-video', 'sora-image', 'gemini-image', 'zimage-image', 'gitee-image') NOT NULL,
+  type ENUM('sora-video', 'flow-video', 'sora-image', 'flow-image', 'gemini-image', 'zimage-image', 'gitee-image') NOT NULL,
   prompt TEXT,
   params TEXT,
   result_url LONGTEXT,
@@ -468,7 +468,7 @@ export async function initializeDatabase(): Promise<void> {
   // 更新 generations 表的 type 字段以支持 gitee-image（MySQL 需要修改 ENUM）
   if (dbType === 'mysql') {
     try {
-      await db.execute("ALTER TABLE generations MODIFY COLUMN type ENUM('sora-video', 'sora-image', 'gemini-image', 'zimage-image', 'gitee-image') NOT NULL");
+      await db.execute("ALTER TABLE generations MODIFY COLUMN type ENUM('sora-video', 'flow-video', 'sora-image', 'flow-image', 'gemini-image', 'zimage-image', 'gitee-image') NOT NULL");
     } catch {
       // 忽略错误
     }
@@ -967,7 +967,7 @@ export async function getUserIdsWithRecentSoraVideos(sinceMs: number): Promise<s
 
   const [rows] = await db.execute(
     `SELECT DISTINCT user_id FROM generations
-     WHERE type = 'sora-video'
+     WHERE type IN ('sora-video', 'flow-video')
      AND (created_at >= ? OR status IN ('pending', 'processing'))`,
     [sinceMs]
   );
@@ -985,7 +985,7 @@ export async function getRecentSoraVideoGenerationsByUser(
 
   const [rows] = await db.execute(
     `SELECT * FROM generations
-     WHERE user_id = ? AND type = 'sora-video'
+     WHERE user_id = ? AND type IN ('sora-video', 'flow-video')
      ORDER BY created_at DESC LIMIT ${safeLimit}`,
     [userId]
   );
@@ -1014,7 +1014,7 @@ export async function getRecentSoraVideoGenerations(limit = 20): Promise<Generat
 
   const [rows] = await db.execute(
     `SELECT * FROM generations
-     WHERE type = 'sora-video'
+     WHERE type IN ('sora-video', 'flow-video')
      ORDER BY created_at DESC LIMIT ${safeLimit}`
   );
 
@@ -1123,7 +1123,7 @@ export async function getUserDailyUsage(userId: string): Promise<DailyUsageStats
   const [imageRows] = await db.execute(
     `SELECT COUNT(1) as count FROM generations 
      WHERE user_id = ? AND created_at >= ? 
-     AND type IN ('sora-image', 'gemini-image', 'zimage-image', 'gitee-image')
+     AND type IN ('sora-image', 'flow-image', 'gemini-image', 'zimage-image', 'gitee-image')
      AND status != 'cancelled'`,
     [userId, todayStart]
   );
@@ -1133,7 +1133,7 @@ export async function getUserDailyUsage(userId: string): Promise<DailyUsageStats
   const [videoRows] = await db.execute(
     `SELECT COUNT(1) as count FROM generations 
      WHERE user_id = ? AND created_at >= ? 
-     AND type = 'sora-video'
+     AND type IN ('sora-video', 'flow-video')
      AND status != 'cancelled'`,
     [userId, todayStart]
   );

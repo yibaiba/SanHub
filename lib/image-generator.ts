@@ -666,10 +666,9 @@ async function generateWithOpenAIChat(
   if (!resultUrl) {
     // Check if response contains error message from upstream
     const errorPatterns = [
-      /生成失败[：:]\s*(.+)/,
-      /❌\s*(.+)/,
-      /error[：:]\s*(.+)/i,
-      /failed[：:]\s*(.+)/i,
+      /generation failed[:]\s*(.+)/i,
+      /error[:]\s*(.+)/i,
+      /failed[:]\s*(.+)/i,
     ];
     for (const pattern of errorPatterns) {
       const match = responseText.match(pattern);
@@ -827,6 +826,16 @@ export async function generateImage(request: ImageGenerateRequest): Promise<Gene
         model.resolutions
       );
       break;
+    case 'flow':
+      result = await generateWithOpenAIChat(
+        request,
+        effectiveBaseUrl,
+        effectiveApiKey,
+        model.apiModel,
+        channel.id,
+        model.resolutions
+      );
+      break;
 
     case 'gemini':
       result = await generateWithGemini(
@@ -876,6 +885,9 @@ export async function generateImage(request: ImageGenerateRequest): Promise<Gene
 
   // 设置实际成本
   result.cost = model.costPerGeneration;
+  if (channel.type === 'flow') {
+    result.type = 'flow-image';
+  }
 
   return result;
 }

@@ -11,6 +11,7 @@ import type { VideoChannel, VideoModel, ChannelType, VideoModelFeatures, VideoDu
 const CHANNEL_TYPES: { value: ChannelType; label: string }[] = [
   { value: 'sora', label: 'Sora API' },
   { value: 'openai-compatible', label: 'OpenAI 流式' },
+  { value: 'flow', label: 'Flow' },
 ];
 
 const DEFAULT_FEATURES: VideoModelFeatures = {
