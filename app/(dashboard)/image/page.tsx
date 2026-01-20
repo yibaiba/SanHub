@@ -716,10 +716,11 @@ export default function ImageGenerationPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-100px)] max-w-7xl mx-auto">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4 shrink-0">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4 shrink-0">
         <div>
           <h1 className="text-3xl font-light text-foreground">图像生成</h1>
-          <p className="text-foreground/50 mt-1 font-light">
+          <p className="text-foreground/50 mt-1 text-sm font-light">
             选择模型，生成高质量图像
           </p>
         </div>
@@ -735,6 +736,7 @@ export default function ImageGenerationPage() {
         )}
       </div>
 
+      {/* Warnings */}
       {modelsLoaded && availableModels.length === 0 && (
         <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center gap-3 mb-4 shrink-0">
           <AlertCircle className="w-5 h-5 text-yellow-400 flex-shrink-0" />
@@ -749,25 +751,34 @@ export default function ImageGenerationPage() {
         </div>
       )}
 
+      {/* Results Area */}
       <div className="flex-1 overflow-auto min-h-0 mb-4">
         <ResultGallery
           generations={generations}
           tasks={tasks}
           onRemoveTask={handleRemoveTask}
+          onRestoreParams={handleRestoreParams}
+          onRestoreTaskParams={handleRestoreTaskParams}
+          onLoadMore={handleLoadMoreHistory}
+          hasMore={hasMoreHistory}
+          loading={loadingHistory}
+          onDeleteGeneration={handleDeleteGeneration}
         />
       </div>
 
+      {/* Input Panel - Fixed at bottom */}
       <div className={cn(
-        "surface shrink-0 overflow-visible",
+        "surface shrink-0",
         (availableModels.length === 0 || isImageLimitReached) && "opacity-50 pointer-events-none"
       )}>
         <div className="p-4">
-          <div className="flex gap-4 mb-4">
+          {/* Input row */}
+          <div className="flex gap-3 mb-3">
             {currentModel?.features.imageToImage && (
-              <div
+              <button
                 onClick={() => fileInputRef.current?.click()}
                 className={cn(
-                  'w-24 h-20 shrink-0 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer transition-all',
+                  'w-16 h-16 shrink-0 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer transition-all',
                   images.length > 0 ? 'border-border/70 bg-card/60' : 'border-border/70 hover:border-border hover:bg-card/60'
                 )}
               >
@@ -792,30 +803,29 @@ export default function ImageGenerationPage() {
                         e.stopPropagation();
                         clearImages();
                       }}
-                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600"
+                      className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600"
                     >
-                      <X className="w-3 h-3 text-white" />
+                      <X className="w-2.5 h-2.5 text-white" />
                     </button>
                   </div>
                 ) : (
                   <>
-                    <Upload className="w-5 h-5 text-foreground/40 mb-1" />
-                    <span className="text-[10px] text-foreground/40">参考图</span>
+                    <Upload className="w-4 h-4 text-foreground/40 mb-0.5" />
+                    <span className="text-[9px] text-foreground/40">参考图</span>
                   </>
                 )}
-              </div>
+              </button>
             )}
 
-            <div className="flex-1 relative">
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="描述你想要生成的图像..."
-                className="w-full h-20 px-3 py-2 bg-input/70 border border-border/70 text-foreground rounded-lg resize-none text-sm focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30"
-              />
-            </div>
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="描述你想要生成的图像..."
+              className="flex-1 h-16 px-3 py-2 bg-input/70 border border-border/70 text-foreground rounded-lg resize-none text-sm focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30"
+            />
           </div>
 
+          {/* Controls row */}
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
               <select
@@ -864,16 +874,6 @@ export default function ImageGenerationPage() {
               <span className="text-xs text-foreground/40">{getCurrentResolutionDisplay()}</span>
             )}
 
-            <label className="flex items-center gap-1.5 cursor-pointer select-none text-xs text-foreground/50">
-              <input
-                type="checkbox"
-                checked={keepPrompt}
-                onChange={(e) => setKeepPrompt(e.target.checked)}
-                className="w-3.5 h-3.5 rounded border-border/70 bg-card/60 accent-sky-400 cursor-pointer"
-              />
-              <span>保留</span>
-            </label>
-
             {error && (
               <div className="flex items-center gap-1.5 text-xs text-red-400">
                 <AlertCircle className="w-3 h-3" />
@@ -888,12 +888,11 @@ export default function ImageGenerationPage() {
                 onClick={handleGachaMode}
                 disabled={submitting || compressing}
                 className={cn(
-                  'w-9 h-9 flex items-center justify-center rounded-lg transition-all',
+                  'w-8 h-8 flex items-center justify-center rounded-lg transition-all',
                   submitting || compressing
                     ? 'bg-card/60 text-foreground/40 cursor-not-allowed'
                     : 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:opacity-90'
                 )}
-                title="抽卡模式"
               >
                 {compressing || submitting ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -901,22 +900,13 @@ export default function ImageGenerationPage() {
                   <Dices className="w-4 h-4" />
                 )}
               </button>
-              <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-20">
-                <div className="bg-card/90 border border-border/70 rounded-lg px-3 py-2 text-xs text-foreground/80 whitespace-nowrap shadow-lg">
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <Info className="w-3 h-3 text-amber-300" />
-                    <span className="font-medium text-foreground">抽卡模式</span>
-                  </div>
-                  <p>一次性提交 3 个相同参数的任务</p>
-                </div>
-              </div>
             </div>
 
             <button
               onClick={handleGenerate}
               disabled={submitting || compressing}
               className={cn(
-                'flex items-center gap-2 px-5 py-2 rounded-lg font-medium text-sm transition-all',
+                'flex items-center gap-2 px-4 py-1.5 rounded-lg font-medium text-sm transition-all',
                 submitting || compressing
                   ? 'bg-card/60 text-foreground/40 cursor-not-allowed'
                   : 'bg-gradient-to-r from-sky-500 to-emerald-500 text-white hover:opacity-90'
@@ -925,7 +915,7 @@ export default function ImageGenerationPage() {
               {submitting || compressing ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>{compressing ? '处理图片中...' : '提交中...'}</span>
+                  <span>{compressing ? '处理中' : '提交中'}</span>
                 </>
               ) : (
                 <>
@@ -935,19 +925,6 @@ export default function ImageGenerationPage() {
               )}
             </button>
           </div>
-        </div>
-        <div className="lg:col-span-2">
-          <ResultGallery
-            generations={generations}
-            tasks={tasks}
-            onRemoveTask={handleRemoveTask}
-            onRestoreParams={handleRestoreParams}
-            onRestoreTaskParams={handleRestoreTaskParams}
-            onLoadMore={handleLoadMoreHistory}
-            hasMore={hasMoreHistory}
-            loading={loadingHistory}
-            onDeleteGeneration={handleDeleteGeneration}
-          />
         </div>
       </div>
     </div>
