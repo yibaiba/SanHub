@@ -115,10 +115,23 @@ export class SQLiteAdapter implements DatabaseAdapter {
         const result = safeParams.length ? stmt.run(...safeParams) : stmt.run();
         return [[], { affectedRows: result.changes, insertId: result.lastInsertRowid }];
       }
-    } catch (error) {
-      console.error('[SQLite] SQL execution error:', error);
-      console.error('[SQLite] SQL:', sql);
-      console.error('[SQLite] Params:', safeParams);
+    } catch (error: any) {
+      // Suppress expected migration errors (duplicate column, etc.)
+      const isMigrationError = 
+        error?.code === 'SQLITE_ERROR' && 
+        (error?.message?.includes('duplicate column name') || 
+         error?.message?.includes('no such column'));
+      
+      // Suppress expected constraint errors (admin already exists, etc.)
+      const isConstraintError = 
+        error?.code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+        error?.message?.includes('UNIQUE constraint failed');
+      
+      if (!isMigrationError && !isConstraintError) {
+        console.error('[SQLite] SQL execution error:', error);
+        console.error('[SQLite] SQL:', sql);
+        console.error('[SQLite] Params:', safeParams);
+      }
       throw error;
     }
   }

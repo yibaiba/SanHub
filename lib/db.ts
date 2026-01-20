@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary } from '@/types';
+import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, UserRole } from '@/types';
 import { generateId } from './utils';
 import bcrypt from 'bcryptjs';
 import { createDatabaseAdapter, type DatabaseAdapter } from './db-adapter';
@@ -14,7 +14,7 @@ let adapter: DatabaseAdapter | null = null;
 function getAdapter(): DatabaseAdapter {
   if (!adapter) {
     adapter = createDatabaseAdapter();
-    console.log(`[DB] 使用数据库类�? ${process.env.DB_TYPE || 'sqlite'}`);
+    console.log(`[DB] 使用数据库类 ${process.env.DB_TYPE || 'sqlite'}`);
   }
   return adapter;
 }
@@ -268,7 +268,7 @@ export async function initializeDatabase(): Promise<void> {
 
   // 为已存在的记录设置默认值
   try {
-    await db.execute('UPDATE generations SET status = "completed" WHERE status IS NULL OR status = ""');
+    await db.execute("UPDATE generations SET status = 'completed' WHERE status IS NULL OR status = ''");
     await db.execute('UPDATE generations SET updated_at = created_at WHERE updated_at = 0 OR updated_at IS NULL');
     await db.execute("UPDATE generations SET params = '{}' WHERE params IS NULL OR params = ''");
   } catch {
@@ -562,8 +562,8 @@ export async function getUserById(id: string): Promise<User | null> {
     email: row.email,
     password: row.password,
     name: row.name,
-    role: row.role,
-    balance: row.balance,
+    role: row.role as UserRole,
+    balance: Number(row.balance),
     disabled: Boolean(row.disabled),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
@@ -588,8 +588,8 @@ export async function getUserByEmail(email: string): Promise<User | null> {
     email: row.email,
     password: row.password,
     name: row.name,
-    role: row.role,
-    balance: row.balance,
+    role: row.role as UserRole,
+    balance: Number(row.balance),
     disabled: Boolean(row.disabled),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
@@ -1522,21 +1522,29 @@ async function initializeAdmin(): Promise<void> {
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@sanhub.local';
   const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
 
-  const [existing] = await db.execute(
-    'SELECT id FROM users WHERE email = ?',
-    [adminEmail]
-  );
-
-  if ((existing as unknown[]).length === 0) {
-    const hashedPassword = await bcrypt.hash(adminPassword, 10);
-    const now = Date.now();
-
-    await db.execute(
-      `INSERT INTO users (id, email, password, name, role, balance, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [generateId(), adminEmail, hashedPassword, 'Admin', 'admin', 999999, now, now]
+  try {
+    const [existing] = await db.execute(
+      'SELECT id FROM users WHERE email = ?',
+      [adminEmail]
     );
-    console.log('Admin account created:', adminEmail);
+
+    if ((existing as unknown[]).length === 0) {
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
+      const now = Date.now();
+
+      await db.execute(
+        `INSERT INTO users (id, email, password, name, role, balance, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [generateId(), adminEmail, hashedPassword, 'Admin', 'admin', 999999, now, now]
+      );
+      console.log('Admin account created:', adminEmail);
+    }
+  } catch (error: any) {
+    // Ignore duplicate key errors (admin already exists)
+    if (error?.code !== 'SQLITE_CONSTRAINT_UNIQUE' && 
+        !error?.message?.includes('UNIQUE constraint failed')) {
+      throw error;
+    }
   }
 }
 

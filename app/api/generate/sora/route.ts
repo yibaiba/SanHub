@@ -311,24 +311,29 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'User not found' }, { status: 401 });
       }
 
-      if (user.balance < estimatedCost) {
+      // Check balance (admin exempt)
+      const isAdmin = user.role === 'admin';
+      if (!isAdmin && user.balance < estimatedCost) {
         return NextResponse.json(
           { error: `Insufficient balance. Need at least ${estimatedCost}.` },
           { status: 402 }
         );
       }
 
-      try {
-        await updateUserBalance(user.id, -estimatedCost, 'strict');
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Insufficient balance';
-        if (message.includes('Insufficient balance')) {
-          return NextResponse.json(
-            { error: `Insufficient balance. Need at least ${estimatedCost}.` },
-            { status: 402 }
-          );
+      // Deduct credits (admin exempt)
+      if (!isAdmin) {
+        try {
+          await updateUserBalance(user.id, -estimatedCost, 'strict');
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Insufficient balance';
+          if (message.includes('Insufficient balance')) {
+            return NextResponse.json(
+              { error: `Insufficient balance. Need at least ${estimatedCost}.` },
+              { status: 402 }
+            );
+          }
+          throw err;
         }
-        throw err;
       }
 
       const generationType: GenerationType = channel.type === 'flow' ? 'flow-video' : 'sora-video';
@@ -426,25 +431,29 @@ export async function POST(request: NextRequest) {
         ? config.pricing.soraVideo15s
         : config.pricing.soraVideo10s;
 
-    // 检查余额
-    if (user.balance < estimatedCost) {
+    // 检查余额（管理员豁免）
+    const isAdmin = user.role === 'admin';
+    if (!isAdmin && user.balance < estimatedCost) {
       return NextResponse.json(
         { error: `余额不足，需要至少 ${estimatedCost} 积分` },
         { status: 402 }
       );
     }
 
-    try {
-      await updateUserBalance(user.id, -estimatedCost, 'strict');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Insufficient balance';
-      if (message.includes('Insufficient balance')) {
-        return NextResponse.json(
-          { error: `余额不足，需要至少 ${estimatedCost} 积分` },
-          { status: 402 }
-        );
+    // 扣除积分（管理员豁免）
+    if (!isAdmin) {
+      try {
+        await updateUserBalance(user.id, -estimatedCost, 'strict');
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Insufficient balance';
+        if (message.includes('Insufficient balance')) {
+          return NextResponse.json(
+            { error: `余额不足，需要至少 ${estimatedCost} 积分` },
+            { status: 402 }
+          );
+        }
+        throw err;
       }
-      throw err;
     }
 
     // 生成类型固定为视频

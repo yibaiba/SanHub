@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { toast } from '@/components/ui/toaster';
 import type { VideoChannel, VideoModel, ChannelType, VideoModelFeatures, VideoDuration } from '@/types';
+import { VEO_VIDEO_MODELS } from '@/lib/veo-models-config';
 
 const CHANNEL_TYPES: { value: ChannelType; label: string }[] = [
   { value: 'sora', label: 'Sora API' },
@@ -72,6 +73,11 @@ export default function VideoChannelsPage() {
   });
   const [aspectRatioRows, setAspectRatioRows] = useState<AspectRatioRow[]>([...DEFAULT_ASPECT_RATIOS]);
   const [durationRows, setDurationRows] = useState<DurationRow[]>([...DEFAULT_DURATIONS]);
+
+  // Batch import state
+  const [batchImporting, setBatchImporting] = useState(false);
+  const [batchImportProgress, setBatchImportProgress] = useState({ current: 0, total: 0 });
+  const [batchImportResults, setBatchImportResults] = useState<{ success: string[]; failed: Array<{ name: string; error: string }> }>({ success: [], failed: [] });
 
   useEffect(() => {
     loadData();
@@ -335,6 +341,69 @@ export default function VideoChannelsPage() {
   const getDurationCost = (model: VideoModel, duration: string) => {
     const d = model.durations.find(d => d.value === duration);
     return d?.cost || 0;
+  };
+
+  // Batch import Veo video models
+  const batchImportVeoVideoModels = async (channelId: string) => {
+    if (!confirm(`确定要批量导入 ${VEO_VIDEO_MODELS.length} 个 Veo 视频模型吗？`)) return;
+    
+    setBatchImporting(true);
+    setBatchImportProgress({ current: 0, total: VEO_VIDEO_MODELS.length });
+    setBatchImportResults({ success: [], failed: [] });
+
+    const results = { success: [] as string[], failed: [] as Array<{ name: string; error: string }> };
+
+    for (let i = 0; i < VEO_VIDEO_MODELS.length; i++) {
+      const modelConfig = VEO_VIDEO_MODELS[i];
+      setBatchImportProgress({ current: i + 1, total: VEO_VIDEO_MODELS.length });
+
+      try {
+        const res = await fetch('/api/admin/video-models', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channelId,
+            name: modelConfig.name,
+            apiModel: modelConfig.apiModel,
+            description: modelConfig.description,
+            features: modelConfig.features,
+            aspectRatios: modelConfig.aspectRatios,
+            durations: modelConfig.durations,
+            defaultAspectRatio: modelConfig.defaultAspectRatio,
+            defaultDuration: modelConfig.defaultDuration,
+            enabled: modelConfig.enabled,
+            highlight: modelConfig.highlight,
+            sortOrder: modelConfig.sortOrder,
+          }),
+        });
+
+        if (res.ok) {
+          results.success.push(modelConfig.name);
+        } else {
+          const data = await res.json();
+          results.failed.push({ name: modelConfig.name, error: data.error || 'Unknown error' });
+        }
+      } catch (err) {
+        results.failed.push({ 
+          name: modelConfig.name, 
+          error: err instanceof Error ? err.message : 'Network error' 
+        });
+      }
+    }
+
+    setBatchImportResults(results);
+    setBatchImporting(false);
+    
+    if (results.failed.length === 0) {
+      toast({ title: `成功导入 ${results.success.length} 个模型` });
+    } else {
+      toast({ 
+        title: `导入完成：${results.success.length} 成功，${results.failed.length} 失败`,
+        variant: 'destructive'
+      });
+    }
+    
+    loadData();
   };
 
   if (loading) {
@@ -763,6 +832,16 @@ export default function VideoChannelsPage() {
                       <button onClick={() => startAddModel(channel.id)} className="p-2 text-foreground/40 hover:text-green-400 hover:bg-green-500/10 rounded-lg">
                         <Plus className="w-4 h-4" />
                       </button>
+                      {channel.type === 'flow' && (
+                        <button
+                          onClick={() => batchImportVeoVideoModels(channel.id)}
+                          disabled={batchImporting}
+                          className="p-2 text-foreground/40 hover:text-purple-400 hover:bg-purple-500/10 rounded-lg"
+                          title="Batch import Veo video models"
+                        >
+                          {batchImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                        </button>
+                      )}
                       <button onClick={() => startEditChannel(channel)} className="p-2 text-foreground/40 hover:text-foreground hover:bg-card/70 rounded-lg">
                         <Edit2 className="w-4 h-4" />
                       </button>

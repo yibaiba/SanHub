@@ -92,6 +92,12 @@ export default function ImageGenerationPage() {
   const [compressedCache, setCompressedCache] = useState<Map<File, string>>(new Map());
   const [error, setError] = useState('');
   const [keepPrompt, setKeepPrompt] = useState(false);
+  const [keepImages, setKeepImages] = useState(false);
+  
+  // 分页状态
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // 获取当前选中的模型配置
   const currentModel = useMemo(() => {
@@ -345,10 +351,11 @@ export default function ImageGenerationPage() {
         const res = await fetch('/api/user/tasks');
         if (res.ok) {
           const data = await res.json();
-          // Filter pending image tasks (sora, gemini, zimage)
+          // Filter pending image tasks (sora, flow, gemini, zimage, gitee)
           const imageTasks: Task[] = (data.data || [])
             .filter((t: any) =>
               t.type?.includes('sora-image') ||
+              t.type?.includes('flow-image') ||
               t.type?.includes('gemini') ||
               t.type?.includes('zimage') ||
               t.type?.includes('gitee')
@@ -375,6 +382,30 @@ export default function ImageGenerationPage() {
 
     loadPendingTasks();
 
+    const loadHistory = async () => {
+      try {
+        const res = await fetch('/api/user/history?limit=20&page=1');
+        if (res.ok) {
+          const data = await res.json();
+          const imageGenerations = (data.data || []).filter(
+            (g: Generation) =>
+              g.type?.includes('sora-image') ||
+              g.type?.includes('flow-image') ||
+              g.type?.includes('gemini') ||
+              g.type?.includes('zimage') ||
+              g.type?.includes('gitee')
+          );
+          setGenerations(imageGenerations);
+          setHasMoreHistory(imageGenerations.length === 20);
+          setCurrentPage(1);
+        }
+      } catch (err) {
+        console.error('Failed to load history:', err);
+      }
+    };
+    
+    loadHistory();
+
     return () => {
       abortControllers.forEach((controller) => controller.abort());
       abortControllers.clear();
@@ -395,6 +426,96 @@ export default function ImageGenerationPage() {
     }
 
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
+  }, []);
+
+  // 加载更多历史记录
+  const handleLoadMoreHistory = useCallback(async () => {
+    if (loadingHistory || !hasMoreHistory) return;
+    
+    setLoadingHistory(true);
+    try {
+      const nextPage = currentPage + 1;
+      const res = await fetch(`/api/user/history?limit=20&page=${nextPage}`);
+      if (res.ok) {
+        const data = await res.json();
+        const imageGenerations = (data.data || []).filter(
+          (g: Generation) =>
+            g.type?.includes('sora-image') ||
+            g.type?.includes('flow-image') ||
+            g.type?.includes('gemini') ||
+            g.type?.includes('zimage') ||
+            g.type?.includes('gitee')
+        );
+        setGenerations(prev => [...prev, ...imageGenerations]);
+        setHasMoreHistory(imageGenerations.length === 20);
+        setCurrentPage(nextPage);
+      }
+    } catch (err) {
+      console.error('Failed to load more history:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [currentPage, loadingHistory, hasMoreHistory]);
+
+  // 恢复生成参数
+  const handleRestoreParams = useCallback((generation: Generation) => {
+    // 恢复提示词
+    setPrompt(generation.prompt || '');
+    
+    // 恢复图片（如果有）
+    if (generation.params?.referenceImages && Array.isArray(generation.params.referenceImages)) {
+      const restoredFiles = generation.params.referenceImages.map((dataUrl, index) => {
+        // 从 data URL 提取 mime type
+        const mimeMatch = dataUrl.match(/^data:([^;]+);base64,/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        
+        return {
+          data: dataUrl,
+          mimeType,
+          preview: dataUrl,
+        };
+      });
+      
+      setImages(restoredFiles);
+    } else {
+      setImages([]);
+    }
+    
+    // 滚动到顶部输入区域
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  // 删除生成记录
+  const handleDeleteGeneration = useCallback((generationId: string) => {
+    setGenerations(prev => prev.filter(g => g.id !== generationId));
+  }, []);
+
+  // 恢复失败任务的参数
+  const handleRestoreTaskParams = useCallback((task: Task) => {
+    // 恢复提示词
+    setPrompt(task.prompt || '');
+    
+    // 恢复图片（如果有）
+    if (task.referenceImages && Array.isArray(task.referenceImages)) {
+      const restoredFiles = task.referenceImages.map((dataUrl) => {
+        // 从 data URL 提取 mime type
+        const mimeMatch = dataUrl.match(/^data:([^;]+);base64,/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        
+        return {
+          data: dataUrl,
+          mimeType,
+          preview: dataUrl,
+        };
+      });
+      
+      setImages(restoredFiles);
+    } else {
+      setImages([]);
+    }
+    
+    // 滚动到顶部输入区域
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
   // 检查是否达到每日限制
@@ -491,6 +612,7 @@ export default function ImageGenerationPage() {
       type: data.data.type || 'image',
       status: 'pending',
       createdAt: Date.now(),
+      referenceImages: taskImages.map(img => `data:${img.mimeType};base64,${img.data}`),
     };
     setTasks((prev) => [newTask, ...prev]);
     pollTaskStatus(data.data.id, taskPrompt);
@@ -804,6 +926,19 @@ export default function ImageGenerationPage() {
               )}
             </button>
           </div>
+        </div>
+        <div className="lg:col-span-2">
+          <ResultGallery
+            generations={generations}
+            tasks={tasks}
+            onRemoveTask={handleRemoveTask}
+            onRestoreParams={handleRestoreParams}
+            onRestoreTaskParams={handleRestoreTaskParams}
+            onLoadMore={handleLoadMoreHistory}
+            hasMore={hasMoreHistory}
+            loading={loadingHistory}
+            onDeleteGeneration={handleDeleteGeneration}
+          />
         </div>
       </div>
     </div>
