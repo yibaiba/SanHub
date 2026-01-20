@@ -1,0 +1,714 @@
+/**
+ * Veo Models Configuration
+ * Configuration for Gemini, Imagen, and Veo models for Flow channel
+ */
+
+import type { ImageModelFeatures, VideoModelFeatures } from '@/types';
+
+// ========================================
+// Type Definitions
+// ========================================
+
+export interface ImageModelConfig {
+  name: string;
+  apiModel: string;
+  description: string;
+  features: ImageModelFeatures;
+  aspectRatios: string[];
+  imageSizes?: string[];
+  resolutions: Record<string, string | Record<string, string>>;
+  defaultAspectRatio: string;
+  defaultImageSize?: string;
+  costPerGeneration: number;
+  sortOrder: number;
+  enabled: boolean;
+  highlight: boolean;
+}
+
+export interface VideoModelConfig {
+  name: string;
+  apiModel: string;
+  description: string;
+  features: VideoModelFeatures;
+  aspectRatios: Array<{ value: string; label: string }>;
+  durations: Array<{ value: string; label: string; cost: number }>;
+  defaultAspectRatio: string;
+  defaultDuration: string;
+  sortOrder: number;
+  enabled: boolean;
+  highlight: boolean;
+}
+
+// ========================================
+// Image Models Configuration
+// ========================================
+
+export const VEO_IMAGE_MODELS: ImageModelConfig[] = [
+  // Gemini 2.5 Flash Series (2 models)
+  {
+    name: 'Gemini 2.5 Flash 图像生成 (横屏)',
+    apiModel: 'gemini-2.5-flash-image-landscape',
+    description: '快速图像生成，横屏 16:9',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['16:9'],
+    resolutions: { '16:9': '1792x1024' },
+    defaultAspectRatio: '16:9',
+    costPerGeneration: 10,
+    sortOrder: 10,
+    enabled: true,
+    highlight: false,
+  },
+  {
+    name: 'Gemini 2.5 Flash 图像生成 (竖屏)',
+    apiModel: 'gemini-2.5-flash-image-portrait',
+    description: '快速图像生成，竖屏 9:16',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['9:16'],
+    resolutions: { '9:16': '1024x1792' },
+    defaultAspectRatio: '9:16',
+    costPerGeneration: 10,
+    sortOrder: 11,
+    enabled: true,
+    highlight: false,
+  },
+
+  // Gemini 3.0 Pro Series - 1K (5 models)
+  {
+    name: 'Gemini 3.0 Pro 图像生成 (横屏)',
+    apiModel: 'gemini-3.0-pro-image-landscape',
+    description: '高质量图像生成，横屏 16:9',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['16:9'],
+    resolutions: { '16:9': '1792x1024' },
+    defaultAspectRatio: '16:9',
+    costPerGeneration: 10,
+    sortOrder: 20,
+    enabled: true,
+    highlight: false,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 (竖屏)',
+    apiModel: 'gemini-3.0-pro-image-portrait',
+    description: '高质量图像生成，竖屏 9:16',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['9:16'],
+    resolutions: { '9:16': '1024x1792' },
+    defaultAspectRatio: '9:16',
+    costPerGeneration: 10,
+    sortOrder: 21,
+    enabled: true,
+    highlight: false,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 (正方形)',
+    apiModel: 'gemini-3.0-pro-image-square',
+    description: '高质量图像生成，正方形 1:1',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['1:1'],
+    resolutions: { '1:1': '1024x1024' },
+    defaultAspectRatio: '1:1',
+    costPerGeneration: 10,
+    sortOrder: 22,
+    enabled: true,
+    highlight: false,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 (4:3)',
+    apiModel: 'gemini-3.0-pro-image-four-three',
+    description: '高质量图像生成，横屏 4:3',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['4:3'],
+    resolutions: { '4:3': '1024x768' },
+    defaultAspectRatio: '4:3',
+    costPerGeneration: 10,
+    sortOrder: 23,
+    enabled: true,
+    highlight: false,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 (3:4)',
+    apiModel: 'gemini-3.0-pro-image-three-four',
+    description: '高质量图像生成，竖屏 3:4',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['3:4'],
+    resolutions: { '3:4': '768x1024' },
+    defaultAspectRatio: '3:4',
+    costPerGeneration: 10,
+    sortOrder: 24,
+    enabled: true,
+    highlight: false,
+  },
+
+  // Gemini 3.0 Pro Series - 2K (5 models)
+  {
+    name: 'Gemini 3.0 Pro 图像生成 2K (横屏)',
+    apiModel: 'gemini-3.0-pro-image-landscape-2k',
+    description: '2K 高清图像生成，横屏 16:9',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['16:9'],
+    resolutions: { '16:9': '2560x1440' },
+    defaultAspectRatio: '16:9',
+    costPerGeneration: 20,
+    sortOrder: 30,
+    enabled: true,
+    highlight: true,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 2K (竖屏)',
+    apiModel: 'gemini-3.0-pro-image-portrait-2k',
+    description: '2K 高清图像生成，竖屏 9:16',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['9:16'],
+    resolutions: { '9:16': '1440x2560' },
+    defaultAspectRatio: '9:16',
+    costPerGeneration: 20,
+    sortOrder: 31,
+    enabled: true,
+    highlight: true,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 2K (正方形)',
+    apiModel: 'gemini-3.0-pro-image-square-2k',
+    description: '2K 高清图像生成，正方形 1:1',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['1:1'],
+    resolutions: { '1:1': '2048x2048' },
+    defaultAspectRatio: '1:1',
+    costPerGeneration: 20,
+    sortOrder: 32,
+    enabled: true,
+    highlight: true,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 2K (4:3)',
+    apiModel: 'gemini-3.0-pro-image-four-three-2k',
+    description: '2K 高清图像生成，横屏 4:3',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['4:3'],
+    resolutions: { '4:3': '2048x1536' },
+    defaultAspectRatio: '4:3',
+    costPerGeneration: 20,
+    sortOrder: 33,
+    enabled: true,
+    highlight: true,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 2K (3:4)',
+    apiModel: 'gemini-3.0-pro-image-three-four-2k',
+    description: '2K 高清图像生成，竖屏 3:4',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['3:4'],
+    resolutions: { '3:4': '1536x2048' },
+    defaultAspectRatio: '3:4',
+    costPerGeneration: 20,
+    sortOrder: 34,
+    enabled: true,
+    highlight: true,
+  },
+
+  // Gemini 3.0 Pro Series - 4K (5 models)
+  {
+    name: 'Gemini 3.0 Pro 图像生成 4K (横屏)',
+    apiModel: 'gemini-3.0-pro-image-landscape-4k',
+    description: '4K 超高清图像生成，横屏 16:9',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['16:9'],
+    resolutions: { '16:9': '3840x2160' },
+    defaultAspectRatio: '16:9',
+    costPerGeneration: 40,
+    sortOrder: 40,
+    enabled: true,
+    highlight: true,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 4K (竖屏)',
+    apiModel: 'gemini-3.0-pro-image-portrait-4k',
+    description: '4K 超高清图像生成，竖屏 9:16',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['9:16'],
+    resolutions: { '9:16': '2160x3840' },
+    defaultAspectRatio: '9:16',
+    costPerGeneration: 40,
+    sortOrder: 41,
+    enabled: true,
+    highlight: true,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 4K (正方形)',
+    apiModel: 'gemini-3.0-pro-image-square-4k',
+    description: '4K 超高清图像生成，正方形 1:1',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['1:1'],
+    resolutions: { '1:1': '4096x4096' },
+    defaultAspectRatio: '1:1',
+    costPerGeneration: 40,
+    sortOrder: 42,
+    enabled: true,
+    highlight: true,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 4K (4:3)',
+    apiModel: 'gemini-3.0-pro-image-four-three-4k',
+    description: '4K 超高清图像生成，横屏 4:3',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['4:3'],
+    resolutions: { '4:3': '4096x3072' },
+    defaultAspectRatio: '4:3',
+    costPerGeneration: 40,
+    sortOrder: 43,
+    enabled: true,
+    highlight: true,
+  },
+  {
+    name: 'Gemini 3.0 Pro 图像生成 4K (3:4)',
+    apiModel: 'gemini-3.0-pro-image-three-four-4k',
+    description: '4K 超高清图像生成，竖屏 3:4',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['3:4'],
+    resolutions: { '3:4': '3072x4096' },
+    defaultAspectRatio: '3:4',
+    costPerGeneration: 40,
+    sortOrder: 44,
+    enabled: true,
+    highlight: true,
+  },
+
+  // Imagen 4.0 Series (2 models)
+  {
+    name: 'Imagen 4.0 图像生成 (横屏)',
+    apiModel: 'imagen-4.0-generate-preview-landscape',
+    description: 'Google Imagen 4.0，横屏',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['16:9'],
+    resolutions: { '16:9': '1792x1024' },
+    defaultAspectRatio: '16:9',
+    costPerGeneration: 10,
+    sortOrder: 50,
+    enabled: true,
+    highlight: false,
+  },
+  {
+    name: 'Imagen 4.0 图像生成 (竖屏)',
+    apiModel: 'imagen-4.0-generate-preview-portrait',
+    description: 'Google Imagen 4.0，竖屏',
+    features: {
+      textToImage: true,
+      imageToImage: true,
+      upscale: false,
+      matting: false,
+      multipleImages: false,
+      imageSize: false,
+    },
+    aspectRatios: ['9:16'],
+    resolutions: { '9:16': '1024x1792' },
+    defaultAspectRatio: '9:16',
+    costPerGeneration: 10,
+    sortOrder: 51,
+    enabled: true,
+    highlight: false,
+  },
+];
+
+// ========================================
+// Video Models Configuration
+// ========================================
+
+const DEFAULT_VIDEO_DURATIONS = [
+  { value: '10s', label: '10 秒', cost: 100 },
+  { value: '15s', label: '15 秒', cost: 150 },
+  { value: '25s', label: '25 秒', cost: 250 },
+];
+
+export const VEO_VIDEO_MODELS: VideoModelConfig[] = [
+  // Veo 3.1 T2V Fast Series (2 models)
+  {
+    name: 'Veo 3.1 文生视频 Fast (竖屏)',
+    apiModel: 'veo_3_1_t2v_fast_portrait',
+    description: 'Veo 3.1 快速文生视频，竖屏 9:16',
+    features: {
+      textToVideo: true,
+      imageToVideo: false,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'portrait', label: '9:16' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'portrait',
+    defaultDuration: '10s',
+    sortOrder: 10,
+    enabled: true,
+    highlight: true,
+  },
+  {
+    name: 'Veo 3.1 文生视频 Fast (横屏)',
+    apiModel: 'veo_3_1_t2v_fast_landscape',
+    description: 'Veo 3.1 快速文生视频，横屏 16:9',
+    features: {
+      textToVideo: true,
+      imageToVideo: false,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'landscape', label: '16:9' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'landscape',
+    defaultDuration: '10s',
+    sortOrder: 11,
+    enabled: true,
+    highlight: true,
+  },
+
+  // Veo 2.1 T2V Fast Series (2 models)
+  {
+    name: 'Veo 2.1 文生视频 Fast (竖屏)',
+    apiModel: 'veo_2_1_fast_d_15_t2v_portrait',
+    description: 'Veo 2.1 快速文生视频，竖屏 9:16',
+    features: {
+      textToVideo: true,
+      imageToVideo: false,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'portrait', label: '9:16' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'portrait',
+    defaultDuration: '10s',
+    sortOrder: 20,
+    enabled: true,
+    highlight: false,
+  },
+  {
+    name: 'Veo 2.1 文生视频 Fast (横屏)',
+    apiModel: 'veo_2_1_fast_d_15_t2v_landscape',
+    description: 'Veo 2.1 快速文生视频，横屏 16:9',
+    features: {
+      textToVideo: true,
+      imageToVideo: false,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'landscape', label: '16:9' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'landscape',
+    defaultDuration: '10s',
+    sortOrder: 21,
+    enabled: true,
+    highlight: false,
+  },
+
+  // Veo 2.0 T2V Series (2 models)
+  {
+    name: 'Veo 2.0 文生视频 (竖屏)',
+    apiModel: 'veo_2_0_t2v_portrait',
+    description: 'Veo 2.0 文生视频，竖屏 9:16',
+    features: {
+      textToVideo: true,
+      imageToVideo: false,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'portrait', label: '9:16' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'portrait',
+    defaultDuration: '10s',
+    sortOrder: 30,
+    enabled: true,
+    highlight: false,
+  },
+  {
+    name: 'Veo 2.0 文生视频 (横屏)',
+    apiModel: 'veo_2_0_t2v_landscape',
+    description: 'Veo 2.0 文生视频，横屏 16:9',
+    features: {
+      textToVideo: true,
+      imageToVideo: false,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'landscape', label: '16:9' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'landscape',
+    defaultDuration: '10s',
+    sortOrder: 31,
+    enabled: true,
+    highlight: false,
+  },
+
+  // Veo 3.1 I2V Fast Series (2 models)
+  {
+    name: 'Veo 3.1 图生视频 Fast (竖屏)',
+    apiModel: 'veo_3_1_i2v_s_fast_fl_portrait',
+    description: 'Veo 3.1 快速图生视频（支持首尾帧），竖屏 9:16',
+    features: {
+      textToVideo: true,
+      imageToVideo: true,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'portrait', label: '9:16' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'portrait',
+    defaultDuration: '10s',
+    sortOrder: 40,
+    enabled: true,
+    highlight: true,
+  },
+  {
+    name: 'Veo 3.1 图生视频 Fast (横屏)',
+    apiModel: 'veo_3_1_i2v_s_fast_fl_landscape',
+    description: 'Veo 3.1 快速图生视频（支持首尾帧），横屏 16:9',
+    features: {
+      textToVideo: true,
+      imageToVideo: true,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'landscape', label: '16:9' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'landscape',
+    defaultDuration: '10s',
+    sortOrder: 41,
+    enabled: true,
+    highlight: true,
+  },
+
+  // Veo 2.1 I2V Fast Series (2 models)
+  {
+    name: 'Veo 2.1 图生视频 Fast (竖屏)',
+    apiModel: 'veo_2_1_fast_d_15_i2v_portrait',
+    description: 'Veo 2.1 快速图生视频（支持首尾帧），竖屏 9:16',
+    features: {
+      textToVideo: true,
+      imageToVideo: true,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'portrait', label: '9:16' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'portrait',
+    defaultDuration: '10s',
+    sortOrder: 50,
+    enabled: true,
+    highlight: false,
+  },
+  {
+    name: 'Veo 2.1 图生视频 Fast (横屏)',
+    apiModel: 'veo_2_1_fast_d_15_i2v_landscape',
+    description: 'Veo 2.1 快速图生视频（支持首尾帧），横屏 16:9',
+    features: {
+      textToVideo: true,
+      imageToVideo: true,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'landscape', label: '16:9' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'landscape',
+    defaultDuration: '10s',
+    sortOrder: 51,
+    enabled: true,
+    highlight: false,
+  },
+
+  // Veo 2.0 I2V Series (2 models)
+  {
+    name: 'Veo 2.0 图生视频 (竖屏)',
+    apiModel: 'veo_2_0_i2v_portrait',
+    description: 'Veo 2.0 图生视频（支持首尾帧），竖屏 9:16',
+    features: {
+      textToVideo: true,
+      imageToVideo: true,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'portrait', label: '9:16' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'portrait',
+    defaultDuration: '10s',
+    sortOrder: 60,
+    enabled: true,
+    highlight: false,
+  },
+  {
+    name: 'Veo 2.0 图生视频 (横屏)',
+    apiModel: 'veo_2_0_i2v_landscape',
+    description: 'Veo 2.0 图生视频（支持首尾帧），横屏 16:9',
+    features: {
+      textToVideo: true,
+      imageToVideo: true,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'landscape', label: '16:9' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'landscape',
+    defaultDuration: '10s',
+    sortOrder: 61,
+    enabled: true,
+    highlight: false,
+  },
+
+  // Veo 3.0 R2V Fast Series (2 models)
+  {
+    name: 'Veo 3.0 多图生成视频 Fast (竖屏)',
+    apiModel: 'veo_3_0_r2v_fast_portrait',
+    description: 'Veo 3.0 快速多图生成视频，竖屏 9:16',
+    features: {
+      textToVideo: true,
+      imageToVideo: true,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'portrait', label: '9:16' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'portrait',
+    defaultDuration: '10s',
+    sortOrder: 70,
+    enabled: true,
+    highlight: true,
+  },
+  {
+    name: 'Veo 3.0 多图生成视频 Fast (横屏)',
+    apiModel: 'veo_3_0_r2v_fast_landscape',
+    description: 'Veo 3.0 快速多图生成视频，横屏 16:9',
+    features: {
+      textToVideo: true,
+      imageToVideo: true,
+      videoToVideo: false,
+      supportStyles: false,
+    },
+    aspectRatios: [{ value: 'landscape', label: '16:9' }],
+    durations: DEFAULT_VIDEO_DURATIONS,
+    defaultAspectRatio: 'landscape',
+    defaultDuration: '10s',
+    sortOrder: 71,
+    enabled: true,
+    highlight: true,
+  },
+];

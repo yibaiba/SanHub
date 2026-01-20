@@ -90,11 +90,37 @@ export async function saveMediaToFile(id: string, dataUrl: string): Promise<stri
 /**
  * 保存媒体文件（异步版本，优先上传到 PicUI 图床）
  * @param id 唯一标识符（通常是 generation ID）
- * @param dataUrl base64 data URL
+ * @param dataUrl base64 data URL 或外部 URL
  * @returns 图床 URL、本地文件路径或原始 data URL
  */
 export async function saveMediaAsync(id: string, dataUrl: string): Promise<string> {
-  // 如果不是 data URL，直接返回（可能是外部 URL）
+  // 如果是外部 HTTP(S) URL，需要下载并转换
+  if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
+    try {
+      console.log(`[MediaStorage] Downloading external URL: ${dataUrl.substring(0, 100)}...`);
+      
+      const response = await fetch(dataUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const buffer = await response.arrayBuffer();
+      const contentType = response.headers.get('content-type') || 'image/jpeg';
+      const base64 = Buffer.from(buffer).toString('base64');
+      const convertedDataUrl = `data:${contentType};base64,${base64}`;
+      
+      console.log(`[MediaStorage] Downloaded ${(buffer.byteLength / 1024).toFixed(1)} KB`);
+      
+      // 递归调用，处理转换后的 data URL
+      return await saveMediaAsync(id, convertedDataUrl);
+    } catch (error) {
+      console.error('[MediaStorage] Failed to download external URL:', error);
+      // 失败时返回原始 URL（但可能会过期）
+      return dataUrl;
+    }
+  }
+  
+  // 如果不是 data URL，直接返回
   if (!dataUrl.startsWith('data:')) {
     return dataUrl;
   }

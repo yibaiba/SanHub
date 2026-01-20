@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, Maximize2, X, Play, Image as ImageIcon, Sparkles, Loader2, AlertCircle, Copy, ExternalLink } from 'lucide-react';
+import { Download, Maximize2, X, Play, Image as ImageIcon, Sparkles, Loader2, AlertCircle, Copy, ExternalLink, RotateCcw } from 'lucide-react';
 import type { Generation } from '@/types';
 import { formatDate, truncate } from '@/lib/utils';
 import { downloadAsset } from '@/lib/download';
@@ -19,18 +19,28 @@ export interface Task {
   errorMessage?: string;
   result?: Generation;
   createdAt: number;
+  referenceImages?: string[]; // data URLs
 }
 
 interface ResultGalleryProps {
   generations: Generation[];
   tasks?: Task[];
   onRemoveTask?: (taskId: string) => void;
+  onRestoreParams?: (generation: Generation) => void;
+  onRestoreTaskParams?: (task: Task) => void;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  loading?: boolean;
+  onDeleteGeneration?: (generationId: string) => void;
 }
 
-export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultGalleryProps) {
+export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestoreParams, onRestoreTaskParams, onLoadMore, hasMore = false, loading = false, onDeleteGeneration }: ResultGalleryProps) {
   const [selected, setSelected] = useState<Generation | null>(null);
   const [visibleCount, setVisibleCount] = useState(12);
   const renderMoreRef = useRef<HTMLDivElement>(null);
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   useEffect(() => {
     setVisibleCount((prev) => {
@@ -63,6 +73,54 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
     }
   };
 
+  const handleDeleteGeneration = async (generationId: string) => {
+    if (!onDeleteGeneration) return;
+    
+    setDeletingIds(prev => new Set(prev).add(generationId));
+    
+    try {
+      const res = await fetch('/api/user/history/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'single', id: generationId }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || '删除失败');
+      }
+
+      onDeleteGeneration(generationId);
+      toast({ title: '已删除' });
+      setSelected(null); // Close lightbox after deletion
+    } catch (err) {
+      console.error('Delete failed', err);
+      toast({
+        title: '删除失败',
+        description: err instanceof Error ? err.message : '请稍后重试',
+        variant: 'destructive',
+      });
+    } finally {
+      setDeletingIds(prev => {
+        const next = new Set(prev);
+        next.delete(generationId);
+        return next;
+      });
+      setShowDeleteConfirm(false);
+      setDeleteTarget(null);
+    }
+  };
+
+  const confirmDelete = (generationId: string) => {
+    setDeleteTarget(generationId);
+    setShowDeleteConfirm(true);
+  };
+
+  const cancelDelete = () => {
+    setShowDeleteConfirm(false);
+    setDeleteTarget(null);
+  };
+
   const isVideo = (gen: Generation) => gen.type.includes('video');
   const isTaskVideo = (task: Task) => task.type?.includes('video') || task.model?.includes('video');
 
@@ -82,22 +140,26 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
   const hasMoreGenerations = visibleCount < generations.length;
 
   useEffect(() => {
-    if (!hasMoreGenerations) return;
+    if (!hasMore || !onLoadMore) return;
     const target = renderMoreRef.current;
     if (!target) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (!entries[0].isIntersecting) return;
-        setVisibleCount((prev) => Math.min(prev + 12, generations.length));
+        if (!entries[0].isIntersecting || loading) return;
+        onLoadMore();
       },
       { rootMargin: '200px' }
     );
     observer.observe(target);
     return () => observer.disconnect();
-  }, [hasMoreGenerations, generations.length]);
+  }, [hasMore, onLoadMore, loading]);
 
   const handleRenderMore = () => {
-    setVisibleCount((prev) => Math.min(prev + 12, generations.length));
+    if (onLoadMore && hasMore && !loading) {
+      onLoadMore();
+    } else {
+      setVisibleCount((prev) => Math.min(prev + 12, generations.length));
+    }
   };
 
   return (
@@ -202,15 +264,30 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
                       </p>
                     )}
                   </div>
-                  {/* 移除按钮 */}
-                  {onRemoveTask && (
-                    <button
-                      onClick={() => onRemoveTask(task.id)}
-                      className="absolute top-2 right-2 p-1.5 bg-card/70 border border-border/70 backdrop-blur-sm rounded-md hover:bg-card/90 transition-colors"
-                    >
-                      <X className="w-3 h-3 text-foreground" />
-                    </button>
-                  )}
+                  {/* Action buttons */}
+                  <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100">
+                    {onRestoreTaskParams && (
+                      <button
+                        onClick={() => {
+                          onRestoreTaskParams(task);
+                          toast({ title: '已恢复参数' });
+                        }}
+                        className="p-1.5 bg-card/70 border border-border/70 backdrop-blur-sm rounded-md hover:bg-emerald-500/40 transition-colors"
+                        title="恢复参数"
+                      >
+                        <RotateCcw className="w-3 h-3 text-foreground" />
+                      </button>
+                    )}
+                    {onRemoveTask && (
+                      <button
+                        onClick={() => onRemoveTask(task.id)}
+                        className="p-1.5 bg-card/70 border border-border/70 backdrop-blur-sm rounded-md hover:bg-card/90 transition-colors"
+                        title="移除任务"
+                      >
+                        <X className="w-3 h-3 text-foreground" />
+                      </button>
+                    )}
+                  </div>
                   <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-background/80 via-background/30 to-transparent">
                     <p className="text-xs text-foreground/80 truncate">{task.prompt || '无提示词'}</p>
                   </div>
@@ -221,44 +298,81 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
               {visibleGenerations.map((gen) => (
                 <div
                   key={gen.id}
-                  className="group relative aspect-video bg-card/60 rounded-xl overflow-hidden cursor-pointer border border-border/70 hover:border-border transition-all"
-                  onClick={() => setSelected(gen)}
+                  className="group relative aspect-video bg-card/60 rounded-xl overflow-hidden border border-border/70 hover:border-border transition-all"
                 >
-                  {isVideo(gen) ? (
-                    <>
-                      <video
+                  <div 
+                    className="w-full h-full cursor-pointer"
+                    onClick={() => setSelected(gen)}
+                  >
+                    {isVideo(gen) ? (
+                      <>
+                        <video
+                          src={gen.resultUrl}
+                          className="w-full h-full object-cover"
+                          muted
+                          loop
+                          preload="metadata"
+                          onMouseEnter={(e) => e.currentTarget.play()}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.pause();
+                            e.currentTarget.currentTime = 0;
+                          }}
+                        />
+                        <div className="absolute top-2 left-2 px-2 py-1 bg-card/70 border border-border/70 backdrop-blur-sm rounded-md flex items-center gap-1">
+                          <Play className="w-3 h-3 text-foreground" />
+                          <span className="text-[10px] text-foreground">VIDEO</span>
+                        </div>
+                      </>
+                    ) : (
+                      <img
                         src={gen.resultUrl}
+                        alt={gen.prompt}
                         className="w-full h-full object-cover"
-                        muted
-                        loop
-                        preload="metadata"
-                        onMouseEnter={(e) => e.currentTarget.play()}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.pause();
-                          e.currentTarget.currentTime = 0;
-                        }}
+                        loading="lazy"
+                        decoding="async"
                       />
-                      <div className="absolute top-2 left-2 px-2 py-1 bg-card/70 border border-border/70 backdrop-blur-sm rounded-md flex items-center gap-1">
-                        <Play className="w-3 h-3 text-foreground" />
-                        <span className="text-[10px] text-foreground">VIDEO</span>
+                    )}
+                    <div className="absolute inset-0 bg-background/70 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">
+                      <div className="w-12 h-12 bg-card/70 border border-border/70 backdrop-blur-sm rounded-full flex items-center justify-center">
+                        <Maximize2 className="w-5 h-5 text-foreground" />
                       </div>
-                    </>
-                  ) : (
-                    <img
-                      src={gen.resultUrl}
-                      alt={gen.prompt}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                      decoding="async"
-                    />
-                  )}
-                  <div className="absolute inset-0 bg-background/70 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">
-                    <div className="w-12 h-12 bg-card/70 border border-border/70 backdrop-blur-sm rounded-full flex items-center justify-center">
-                      <Maximize2 className="w-5 h-5 text-foreground" />
+                    </div>
+                    <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-background/80 via-background/30 to-transparent">
+                      <p className="text-xs text-foreground/80 truncate">{gen.prompt || '无提示词'}</p>
                     </div>
                   </div>
-                  <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-background/80 via-background/30 to-transparent">
-                    <p className="text-xs text-foreground/80 truncate">{gen.prompt || '无提示词'}</p>
+                  {/* Action buttons */}
+                  <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100">
+                    {onRestoreParams && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRestoreParams(gen);
+                          toast({ title: '已恢复参数' });
+                        }}
+                        className="p-1.5 bg-card/70 border border-border/70 backdrop-blur-sm rounded-md hover:bg-emerald-500/40 transition-colors"
+                        title="恢复参数"
+                      >
+                        <RotateCcw className="w-3 h-3 text-foreground" />
+                      </button>
+                    )}
+                    {onDeleteGeneration && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          confirmDelete(gen.id);
+                        }}
+                        disabled={deletingIds.has(gen.id)}
+                        className="p-1.5 bg-card/70 border border-border/70 backdrop-blur-sm rounded-md hover:bg-red-500/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="删除记录"
+                      >
+                        {deletingIds.has(gen.id) ? (
+                          <Loader2 className="w-3 h-3 text-foreground animate-spin" />
+                        ) : (
+                          <X className="w-3 h-3 text-foreground" />
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -267,14 +381,15 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
         </div>
       </div>
 
-      {hasMoreGenerations && (
+      {(hasMoreGenerations || hasMore) && (
         <div ref={renderMoreRef} className="mt-6 flex items-center justify-center">
           <button
             type="button"
             onClick={handleRenderMore}
-            className="px-4 py-2 rounded-lg bg-card/60 border border-border/70 text-foreground/70 text-sm hover:text-foreground hover:border-border transition"
+            disabled={loading}
+            className="px-4 py-2 rounded-lg bg-card/60 border border-border/70 text-foreground/70 text-sm hover:text-foreground hover:border-border transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Load more
+            {loading ? 'Loading...' : 'Load more'}
           </button>
         </div>
       )}
@@ -381,6 +496,19 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
                   </div>
                 </div>
                 <div className="flex gap-2 shrink-0 w-full md:w-auto">
+                  {onRestoreParams && (
+                    <button
+                      onClick={() => {
+                        onRestoreParams(selected);
+                        toast({ title: '已恢复参数' });
+                        setSelected(null);
+                      }}
+                      className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-500 text-white rounded-xl hover:opacity-90 transition-colors text-sm font-medium"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      回退参数
+                    </button>
+                  )}
                   <button
                     onClick={() => downloadFile(selected.resultUrl, selected.id, selected.type)}
                     className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 bg-foreground text-background rounded-xl hover:opacity-90 transition-colors text-sm font-medium"
@@ -388,12 +516,78 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
                     <Download className="w-4 h-4" />
                     下载
                   </button>
+                  {onDeleteGeneration && (
+                    <button
+                      onClick={() => confirmDelete(selected.id)}
+                      disabled={deletingIds.has(selected.id)}
+                      className="flex items-center justify-center gap-2 px-5 py-2.5 bg-red-500 text-white rounded-xl hover:opacity-90 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {deletingIds.has(selected.id) ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          删除中
+                        </>
+                      ) : (
+                        <>
+                          <X className="w-4 h-4" />
+                          删除
+                        </>
+                      )}
+                    </button>
+                  )}
                   <button
                     onClick={() => setSelected(null)}
                     className="flex items-center justify-center gap-2 px-5 py-2.5 bg-card/60 text-foreground border border-border/70 rounded-xl hover:bg-card/80 transition-colors text-sm font-medium"
                   >
                     <X className="w-4 h-4" />
                     关闭
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {showDeleteConfirm && deleteTarget && (
+        <div
+          className="fixed inset-0 z-[60] bg-background/95 backdrop-blur-xl flex items-center justify-center p-4"
+          onClick={cancelDelete}
+        >
+          <div
+            className="bg-card/90 border border-border/70 rounded-2xl p-6 max-w-md w-full shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-6 h-6 text-red-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-medium text-foreground mb-2">确认删除</h3>
+                <p className="text-sm text-foreground/70 mb-6">
+                  确定要删除这条生成记录吗？此操作无法撤销。
+                </p>
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={cancelDelete}
+                    className="px-4 py-2 rounded-lg bg-card/60 border border-border/70 text-foreground text-sm hover:bg-card/80 transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => deleteTarget && handleDeleteGeneration(deleteTarget)}
+                    disabled={deletingIds.has(deleteTarget)}
+                    className="px-4 py-2 rounded-lg bg-red-500 text-white text-sm hover:opacity-90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {deletingIds.has(deleteTarget) ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        删除中...
+                      </>
+                    ) : (
+                      '确认删除'
+                    )}
                   </button>
                 </div>
               </div>

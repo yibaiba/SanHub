@@ -138,24 +138,29 @@ export async function POST(request: NextRequest) {
     const config = await getSystemConfig();
     const estimatedCost = config.pricing.soraImage || 1;
 
-    if (user.balance < estimatedCost) {
+    // 检查余额（管理员豁免）
+    const isAdmin = user.role === 'admin';
+    if (!isAdmin && user.balance < estimatedCost) {
       return NextResponse.json(
         { error: `余额不足，需要至少 ${estimatedCost} 积分` },
         { status: 402 }
       );
     }
 
-    try {
-      await updateUserBalance(user.id, -estimatedCost, 'strict');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Insufficient balance';
-      if (message.includes('Insufficient balance')) {
-        return NextResponse.json(
-          { error: `余额不足，需要至少 ${estimatedCost} 积分` },
-          { status: 402 }
-        );
+    // 扣除积分（管理员豁免）
+    if (!isAdmin) {
+      try {
+        await updateUserBalance(user.id, -estimatedCost, 'strict');
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Insufficient balance';
+        if (message.includes('Insufficient balance')) {
+          return NextResponse.json(
+            { error: `余额不足，需要至少 ${estimatedCost} 积分` },
+            { status: 402 }
+          );
+        }
+        throw err;
       }
-      throw err;
     }
 
     let generation: Generation;

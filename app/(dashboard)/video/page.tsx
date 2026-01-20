@@ -34,6 +34,12 @@ const ResultGallery = dynamic(
 
 type CreationMode = 'normal' | 'remix' | 'storyboard';
 
+// 视频引擎类型
+type VideoEngine = 'sora' | 'veo';
+
+// Veo 3 创作模式
+type Veo3Mode = 't2v' | 'i2v' | 'r2v';
+
 // 每日使用量类型
 interface DailyUsage {
   imageCount: number;
@@ -45,6 +51,12 @@ const CREATION_MODES = [
   { id: 'normal', label: '普通生成', icon: Video, description: '文本/图片生成视频' },
   { id: 'remix', label: '视频Remix', icon: Wand2, description: '基于已有视频继续创作' },
   { id: 'storyboard', label: '视频分镜', icon: Film, description: '多镜头分段生成' },
+] as const;
+
+const VEO3_MODES = [
+  { id: 't2v', label: '文生视频', icon: Video, description: '文字描述生成视频', maxImages: 0 },
+  { id: 'i2v', label: '图生视频', icon: Upload, description: '1张=首帧，2张=首尾帧', maxImages: 2 },
+  { id: 'r2v', label: '图片融合', icon: Sparkles, description: '多图参考合成视频', maxImages: 3 },
 ] as const;
 
 type OptionGroupProps = {
@@ -66,8 +78,137 @@ function OptionGroup({ label, children, className, contentClassName }: OptionGro
 }
 
 export default function VideoGenerationPage() {
+  // 图片库选择状态
+  const [showImagePicker, setShowImagePicker] = useState(false);
+  const [imageLibrary, setImageLibrary] = useState<Generation[]>([]);
+  const [loadingLibrary, setLoadingLibrary] = useState(false);
+
+  // 加载图片库
+  const loadImageLibrary = async () => {
+    setLoadingLibrary(true);
+    try {
+      const res = await fetch('/api/user/history?limit=50&page=1');
+      if (res.ok) {
+        const data = await res.json();
+        const images = (data.data || []).filter(
+          (g: Generation) => g.type.includes('image') || g.type === 'sora-image' || g.type === 'flow-image'
+        );
+        setImageLibrary(images);
+      }
+    } catch (err) {
+      console.error('Failed to load image library:', err);
+      toast({
+        title: '加载失败',
+        description: '无法加载图片库',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoadingLibrary(false);
+    }
+  };
+
+  // 从图片库选择图片
+  const handleSelectFromLibrary = async (generation: Generation) => {
+    try {
+      // 获取图片 URL
+      const imageUrl = generation.resultUrl;
+      if (!imageUrl) {
+        toast({
+          title: '无效图片',
+          description: '该图片没有有效的 URL',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // 检查数量限制
+      let maxImages = 10;
+      if (videoEngine === 'veo') {
+        const currentVeo3Mode = VEO3_MODES.find(m => m.id === veo3Mode);
+        maxImages = currentVeo3Mode?.maxImages || 0;
+        if (files.length >= maxImages) {
+          toast({
+            title: '图片数量超限',
+            description: `当前模式最多支持 ${maxImages} 张图片`,
+            variant: 'destructive',
+          });
+          return;
+        }
+      }
+
+      // 下载图片
+      const response = await fetch(`/api/media/${generation.id}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch image');
+      }
+
+      const blob = await response.blob();
+      const file = new File([blob], `image-${generation.id}.jpg`, { type: blob.type });
+
+      // 处理图片（Veo 模式需要裁剪）
+      if (videoEngine === 'veo') {
+        const img = new Image();
+        const tempUrl = URL.createObjectURL(file);
+        
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => {
+            URL.revokeObjectURL(tempUrl);
+            resolve();
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(tempUrl);
+            reject(new Error('Failed to load image'));
+          };
+          img.src = tempUrl;
+        });
+        
+        const width = img.width;
+        const height = img.height;
+        
+        let targetRatio: 'landscape' | 'portrait';
+        if (width > height) {
+          targetRatio = 'landscape';
+          setAspectRatio('landscape');
+        } else {
+          targetRatio = 'portrait';
+          setAspectRatio('portrait');
+        }
+        
+        const { file: croppedFile, preview: previewUrl } = await cropImageToAspectRatio(file, targetRatio);
+        
+        setFiles((prev) => [
+          ...prev,
+          { data: '', mimeType: file.type, preview: previewUrl, file: croppedFile },
+        ]);
+      } else {
+        // Sora 模式：直接使用
+        const previewUrl = URL.createObjectURL(file);
+        setFiles((prev) => [
+          ...prev,
+          { data: '', mimeType: file.type, preview: previewUrl, file },
+        ]);
+      }
+
+      toast({
+        title: '已添加图片',
+        description: '图片已添加到参考素材',
+      });
+    } catch (err) {
+      console.error('Failed to select image:', err);
+      toast({
+        title: '添加失败',
+        description: '无法添加该图片',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const uploadAreaRef = useRef<HTMLDivElement>(null);
+  
+  // 拖拽状态
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
 
   // 模型列表（从 API 获取）
   const [availableModels, setAvailableModels] = useState<SafeVideoModel[]>([]);
@@ -77,8 +218,14 @@ export default function VideoGenerationPage() {
   const [dailyUsage, setDailyUsage] = useState<DailyUsage>({ imageCount: 0, videoCount: 0, characterCardCount: 0 });
   const [dailyLimits, setDailyLimits] = useState<DailyLimitConfig>({ imageLimit: 0, videoLimit: 0, characterCardLimit: 0 });
 
+  // 视频引擎选择
+  const [videoEngine, setVideoEngine] = useState<VideoEngine>('sora');
+
   // 创作模式
   const [creationMode, setCreationMode] = useState<CreationMode>('normal');
+  
+  // Veo 3 模式
+  const [veo3Mode, setVeo3Mode] = useState<Veo3Mode>('i2v');
 
   // 模型选择
   const [selectedModelId, setSelectedModelId] = useState<string>('');
@@ -116,6 +263,11 @@ export default function VideoGenerationPage() {
   const [error, setError] = useState('');
   const [keepPrompt, setKeepPrompt] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
+  
+  // 分页状态
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // 角色卡选择
   const [characterCards, setCharacterCards] = useState<CharacterCard[]>([]);
@@ -126,6 +278,39 @@ export default function VideoGenerationPage() {
   const currentModel = useMemo(() => {
     return availableModels.find(m => m.id === selectedModelId) || availableModels[0];
   }, [availableModels, selectedModelId]);
+  
+  // 根据引擎类型和模式过滤模型
+  const filteredModels = useMemo(() => {
+    if (videoEngine === 'sora') {
+      // Sora 引擎：过滤掉所有 Veo 模型
+      return availableModels.filter(model => {
+        const modelName = model.name.toLowerCase();
+        return !modelName.includes('veo');
+      });
+    } else {
+      // Veo 引擎：根据模式过滤对应的模型
+      return availableModels.filter(model => {
+        const modelName = model.name.toLowerCase();
+        const isVeo = modelName.includes('veo');
+        
+        if (!isVeo) return false;
+        
+        // 根据 Veo 模式过滤
+        if (veo3Mode === 't2v') {
+          // 文生视频：只显示包含"文生视频"的模型
+          return modelName.includes('文生视频');
+        } else if (veo3Mode === 'i2v') {
+          // 图生视频：只显示包含"图生视频"的模型
+          return modelName.includes('图生视频');
+        } else if (veo3Mode === 'r2v') {
+          // 图片融合：只显示包含"多图生成"或"融合"的模型
+          return modelName.includes('多图生成') || modelName.includes('融合');
+        }
+        
+        return false;
+      });
+    }
+  }, [availableModels, videoEngine, veo3Mode]);
 
   // 加载模型列表
   useEffect(() => {
@@ -171,6 +356,19 @@ export default function VideoGenerationPage() {
     };
     loadDailyUsage();
   }, []);
+
+  // 当引擎类型或 Veo 模式改变时，自动选择第一个对应的模型
+  useEffect(() => {
+    if (filteredModels.length > 0) {
+      const firstModel = filteredModels[0];
+      setSelectedModelId(firstModel.id);
+      setAspectRatio(firstModel.defaultAspectRatio);
+      setDuration(firstModel.defaultDuration);
+      // 清空文件
+      files.forEach((f) => URL.revokeObjectURL(f.preview));
+      setFiles([]);
+    }
+  }, [videoEngine, veo3Mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 当模型改变时，重置参数到默认值
   useEffect(() => {
@@ -416,9 +614,10 @@ export default function VideoGenerationPage() {
     []
   );
 
-  // 加载 pending 任务
+  // 加载 pending 任务和历史记录
   useEffect(() => {
     const abortControllers = abortControllersRef.current;
+    
     const loadPendingTasks = async () => {
       try {
         const res = await fetch('/api/user/tasks');
@@ -446,7 +645,25 @@ export default function VideoGenerationPage() {
       }
     };
 
+    const loadHistory = async () => {
+      try {
+        const res = await fetch('/api/user/history?limit=20&page=1');
+        if (res.ok) {
+          const data = await res.json();
+          const videoGenerations = (data.data || []).filter(
+            (g: Generation) => g.type === 'sora-video' || g.type === 'flow-video'
+          );
+          setGenerations(videoGenerations);
+          setHasMoreHistory(videoGenerations.length === 20);
+          setCurrentPage(1);
+        }
+      } catch (err) {
+        console.error('Failed to load history:', err);
+      }
+    };
+
     loadPendingTasks();
+    loadHistory();
 
     return () => {
       abortControllers.forEach((controller) => controller.abort());
@@ -454,9 +671,53 @@ export default function VideoGenerationPage() {
     };
   }, [pollTaskStatus]);
 
+  // 加载更多历史记录
+  const handleLoadMoreHistory = useCallback(async () => {
+    if (loadingHistory || !hasMoreHistory) return;
+    
+    setLoadingHistory(true);
+    try {
+      const nextPage = currentPage + 1;
+      const res = await fetch(`/api/user/history?limit=20&page=${nextPage}`);
+      if (res.ok) {
+        const data = await res.json();
+        const videoGenerations = (data.data || []).filter(
+          (g: Generation) => g.type === 'sora-video' || g.type === 'flow-video'
+        );
+        setGenerations(prev => [...prev, ...videoGenerations]);
+        setHasMoreHistory(videoGenerations.length === 20);
+        setCurrentPage(nextPage);
+      }
+    } catch (err) {
+      console.error('Failed to load more history:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [currentPage, loadingHistory, hasMoreHistory]);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
     const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB limit
+    
+    // 获取当前模式的最大图片数量
+    let maxImages = 10; // 默认值（Sora）
+    if (videoEngine === 'veo') {
+      const currentVeo3Mode = VEO3_MODES.find(m => m.id === veo3Mode);
+      maxImages = currentVeo3Mode?.maxImages || 0;
+      
+      // 检查是否超出限制
+      if (files.length + selectedFiles.length > maxImages) {
+        toast({
+          title: '图片数量超限',
+          description: `当前模式最多支持 ${maxImages} 张图片`,
+          variant: 'destructive',
+        });
+        e.target.value = '';
+        return;
+      }
+    }
+    
+    const processedFiles: Array<{ data: string; mimeType: string; preview: string; file?: File }> = [];
     
     for (const file of selectedFiles) {
       // Only allow images, no videos
@@ -479,13 +740,65 @@ export default function VideoGenerationPage() {
         continue;
       }
       
-      // Store file reference for lazy conversion, use blob URL for preview
-      const previewUrl = URL.createObjectURL(file);
-      setFiles((prev) => [
-        ...prev,
-        { data: '', mimeType: file.type, preview: previewUrl, file },
-      ]);
+      // For Veo mode only, detect image aspect ratio, crop image, and auto-set aspectRatio
+      if (videoEngine === 'veo') {
+        try {
+          // First detect orientation
+          const img = new Image();
+          const tempUrl = URL.createObjectURL(file);
+          
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => {
+              URL.revokeObjectURL(tempUrl);
+              resolve();
+            };
+            img.onerror = () => {
+              URL.revokeObjectURL(tempUrl);
+              reject(new Error('Failed to load image'));
+            };
+            img.src = tempUrl;
+          });
+          
+          const width = img.width;
+          const height = img.height;
+          
+          // Determine target aspect ratio based on image orientation
+          let targetRatio: 'landscape' | 'portrait';
+          if (width > height) {
+            targetRatio = 'landscape';
+          } else {
+            targetRatio = 'portrait';
+          }
+          
+          // Set aspect ratio based on first image
+          if (processedFiles.length === 0) {
+            setAspectRatio(targetRatio);
+          }
+          
+          // Crop image to target aspect ratio
+          const { file: croppedFile, preview: previewUrl } = await cropImageToAspectRatio(file, targetRatio);
+          
+          processedFiles.push({ data: '', mimeType: file.type, preview: previewUrl, file: croppedFile });
+        } catch (err) {
+          console.error('Failed to process image:', err);
+          toast({
+            title: '图片处理失败',
+            description: '无法处理该图片，请尝试其他图片',
+            variant: 'destructive',
+          });
+        }
+      } else {
+        // Sora mode: no cropping, just use original file
+        const previewUrl = URL.createObjectURL(file);
+        processedFiles.push({ data: '', mimeType: file.type, preview: previewUrl, file });
+      }
     }
+    
+    // Add all processed files at once
+    if (processedFiles.length > 0) {
+      setFiles((prev) => [...prev, ...processedFiles]);
+    }
+    
     e.target.value = '';
   };
 
@@ -493,6 +806,233 @@ export default function VideoGenerationPage() {
     files.forEach((f) => URL.revokeObjectURL(f.preview));
     setFiles([]);
   };
+
+  // 拖拽处理函数
+  const handleDragStart = (index: number) => {
+    setDraggedIndex(index);
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === index) return;
+    
+    // 交换位置
+    const newFiles = [...files];
+    const draggedFile = newFiles[draggedIndex];
+    newFiles.splice(draggedIndex, 1);
+    newFiles.splice(index, 0, draggedFile);
+    
+    setFiles(newFiles);
+    setDraggedIndex(index);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+  };
+
+  // Crop image to target aspect ratio (for Veo mode)
+  const cropImageToAspectRatio = async (
+    file: File,
+    targetRatio: 'landscape' | 'portrait'
+  ): Promise<{ file: File; preview: string }> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Failed to get canvas context'));
+          return;
+        }
+        
+        const sourceWidth = img.width;
+        const sourceHeight = img.height;
+        
+        // Target aspect ratios
+        const targetAspect = targetRatio === 'landscape' ? 16 / 9 : 9 / 16;
+        const sourceAspect = sourceWidth / sourceHeight;
+        
+        let cropWidth: number;
+        let cropHeight: number;
+        let cropX: number;
+        let cropY: number;
+        
+        if (sourceAspect > targetAspect) {
+          // Source is wider, crop width
+          cropHeight = sourceHeight;
+          cropWidth = cropHeight * targetAspect;
+          cropX = (sourceWidth - cropWidth) / 2;
+          cropY = 0;
+        } else {
+          // Source is taller, crop height
+          cropWidth = sourceWidth;
+          cropHeight = cropWidth / targetAspect;
+          cropX = 0;
+          cropY = (sourceHeight - cropHeight) / 2;
+        }
+        
+        // Set canvas size to cropped dimensions
+        canvas.width = cropWidth;
+        canvas.height = cropHeight;
+        
+        // Draw cropped image
+        ctx.drawImage(
+          img,
+          cropX, cropY, cropWidth, cropHeight,
+          0, 0, cropWidth, cropHeight
+        );
+        
+        // Convert to blob
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              reject(new Error('Failed to create blob'));
+              return;
+            }
+            
+            const croppedFile = new File([blob], file.name, { type: file.type });
+            const previewUrl = URL.createObjectURL(croppedFile);
+            
+            resolve({ file: croppedFile, preview: previewUrl });
+          },
+          file.type,
+          0.95
+        );
+      };
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('Failed to load image'));
+      };
+      
+      img.src = objectUrl;
+    });
+  };
+
+  // Handle paste from clipboard
+  const handlePaste = useCallback(async (e: ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const MAX_FILE_SIZE = 50 * 1024 * 1024;
+    let maxImages = 10;
+    if (videoEngine === 'veo') {
+      const currentVeo3Mode = VEO3_MODES.find(m => m.id === veo3Mode);
+      maxImages = currentVeo3Mode?.maxImages || 0;
+    }
+
+    const imageFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          imageFiles.push(file);
+        }
+      }
+    }
+
+    if (imageFiles.length === 0) return;
+
+    // Check limit
+    if (files.length + imageFiles.length > maxImages) {
+      toast({
+        title: '图片数量超限',
+        description: `当前模式最多支持 ${maxImages} 张图片`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // Process pasted images - collect all processed files first
+    const processedFiles: Array<{ data: string; mimeType: string; preview: string; file?: File }> = [];
+    
+    for (const file of imageFiles) {
+      if (file.size > MAX_FILE_SIZE) {
+        toast({
+          title: '文件过大',
+          description: `${file.name} 超过 50MB 限制`,
+          variant: 'destructive',
+        });
+        continue;
+      }
+
+      try {
+        if (videoEngine === 'veo') {
+          // Veo mode: detect orientation and crop
+          const img = new Image();
+          const tempUrl = URL.createObjectURL(file);
+          
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => {
+              URL.revokeObjectURL(tempUrl);
+              resolve();
+            };
+            img.onerror = () => {
+              URL.revokeObjectURL(tempUrl);
+              reject(new Error('Failed to load image'));
+            };
+            img.src = tempUrl;
+          });
+          
+          const width = img.width;
+          const height = img.height;
+          
+          // Determine target aspect ratio based on first image only
+          let targetRatio: 'landscape' | 'portrait';
+          if (width > height) {
+            targetRatio = 'landscape';
+          } else {
+            targetRatio = 'portrait';
+          }
+          
+          // Set aspect ratio based on first image only
+          if (processedFiles.length === 0) {
+            setAspectRatio(targetRatio);
+          }
+          
+          // Crop image
+          const { file: croppedFile, preview: previewUrl } = await cropImageToAspectRatio(file, targetRatio);
+          
+          processedFiles.push({ data: '', mimeType: file.type, preview: previewUrl, file: croppedFile });
+        } else {
+          // Sora mode: no cropping
+          const previewUrl = URL.createObjectURL(file);
+          processedFiles.push({ data: '', mimeType: file.type, preview: previewUrl, file });
+        }
+      } catch (err) {
+        console.error('Failed to process pasted image:', err);
+      }
+    }
+
+    // Add all processed files at once
+    if (processedFiles.length > 0) {
+      setFiles((prev) => [...prev, ...processedFiles]);
+      toast({
+        title: '已粘贴图片',
+        description: `成功添加 ${processedFiles.length} 张图片`,
+      });
+    }
+  }, [files.length, videoEngine, veo3Mode]);
+
+  // Setup paste event listener
+  useEffect(() => {
+    const uploadArea = uploadAreaRef.current;
+    if (!uploadArea) return;
+
+    const pasteHandler = (e: ClipboardEvent) => {
+      handlePaste(e);
+    };
+
+    uploadArea.addEventListener('paste', pasteHandler as EventListener);
+    return () => {
+      uploadArea.removeEventListener('paste', pasteHandler as EventListener);
+    };
+  }, [handlePaste]);
 
   const handleRemoveTask = useCallback(async (taskId: string) => {
     const controller = abortControllersRef.current.get(taskId);
@@ -508,6 +1048,67 @@ export default function VideoGenerationPage() {
     }
 
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
+  }, []);
+
+  // 恢复生成参数
+  const handleRestoreParams = useCallback((generation: Generation) => {
+    // 恢复提示词
+    setPrompt(generation.prompt || '');
+    
+    // 恢复图片（如果有）
+    if (generation.params?.referenceImages && Array.isArray(generation.params.referenceImages)) {
+      const restoredFiles = generation.params.referenceImages.map((dataUrl, index) => {
+        // 从 data URL 提取 mime type
+        const mimeMatch = dataUrl.match(/^data:([^;]+);base64,/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        
+        return {
+          data: dataUrl,
+          mimeType,
+          preview: dataUrl,
+        };
+      });
+      
+      setFiles(restoredFiles);
+    } else {
+      setFiles([]);
+    }
+    
+    // 滚动到顶部输入区域
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  // 删除生成记录
+  const handleDeleteGeneration = useCallback((generationId: string) => {
+    setGenerations(prev => prev.filter(g => g.id !== generationId));
+  }, []);
+
+  // 恢复失败任务的参数
+  const handleRestoreTaskParams = useCallback((task: Task) => {
+    // 恢复提示词
+    setPrompt(task.prompt || '');
+    
+    // 恢复图片（如果有）
+    if (task.referenceImages && Array.isArray(task.referenceImages)) {
+      const restoredFiles = task.referenceImages.map((dataUrl) => {
+        // 从 data URL 提取 mime type
+        const mimeMatch = dataUrl.match(/^data:([^;]+);base64,/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        
+        return {
+          data: dataUrl,
+          mimeType,
+          preview: dataUrl,
+        };
+      });
+      
+      setFiles(restoredFiles);
+    } else {
+      setFiles([]);
+    }
+    
+    // 滚动到顶部输入区域
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
   // 构建提示词
@@ -614,6 +1215,7 @@ export default function VideoGenerationPage() {
       type: taskType,
       status: 'pending',
       createdAt: Date.now(),
+      referenceImages: taskFiles.map(f => `data:${f.mimeType};base64,${f.data}`),
     };
     setTasks((prev) => [newTask, ...prev]);
     pollTaskStatus(data.data.id, taskPrompt);
@@ -726,11 +1328,44 @@ export default function VideoGenerationPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
+      {/* 引擎选择选项卡 */}
+      <div className="flex items-center gap-2 p-1 bg-card/40 border border-border/50 rounded-xl w-fit">
+        <button
+          onClick={() => setVideoEngine('sora')}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all',
+            videoEngine === 'sora'
+              ? 'bg-foreground text-background'
+              : 'text-foreground/60 hover:text-foreground/80'
+          )}
+        >
+          <Sparkles className="w-4 h-4" />
+          <span>Sora 视频</span>
+        </button>
+        <button
+          onClick={() => setVideoEngine('veo')}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all',
+            videoEngine === 'veo'
+              ? 'bg-foreground text-background'
+              : 'text-foreground/60 hover:text-foreground/80'
+          )}
+        >
+          <Video className="w-4 h-4" />
+          <span>Veo 视频</span>
+        </button>
+      </div>
+
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-3xl font-light text-foreground">视频生成</h1>
+          <h1 className="text-3xl font-light text-foreground">
+            {videoEngine === 'sora' ? 'Sora 视频' : 'Veo 视频'}
+          </h1>
           <p className="text-foreground/50 mt-1 font-light">
-            支持普通生成、Remix、分镜等多种创作模式
+            {videoEngine === 'sora' 
+              ? '支持普通生成、Remix、分镜等多种创作模式'
+              : 'Google VEO 系列模型，支持文生视频、图生视频与图片融合'
+            }
           </p>
         </div>
         {dailyLimits.videoLimit > 0 && (
@@ -774,38 +1409,66 @@ export default function VideoGenerationPage() {
                   <Sparkles className="w-4 h-4 text-sky-300" />
                 </div>
                 <div>
-                  <h2 className="text-base font-medium text-foreground">Sora 视频</h2>
+                  <h2 className="text-base font-medium text-foreground">
+                    {videoEngine === 'sora' ? 'Sora 视频' : 'Veo 视频'}
+                  </h2>
                   <p className="text-xs text-foreground/40">AI 视频创作</p>
                 </div>
               </div>
             </div>
 
             <div className="px-5 py-4 space-y-4">
-              {/* Creation Mode Selection */}
-              <OptionGroup label="创作模式" contentClassName="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {CREATION_MODES.map((mode) => (
-                  <button
-                    key={mode.id}
-                    onClick={() => setCreationMode(mode.id as CreationMode)}
-                    className={cn(
-                      'flex w-full flex-col items-center gap-1.5 px-2 py-2.5 rounded-lg border transition-all',
-                      creationMode === mode.id
-                        ? 'bg-foreground text-background border-transparent'
-                        : 'bg-card/60 text-foreground/70 border-border/70 hover:bg-card/80 hover:text-foreground'
-                    )}
-                  >
-                    <mode.icon className="w-4 h-4" />
-                    <span className="text-xs font-medium">{mode.label}</span>
-                  </button>
-                ))}
+              {/* Creation Mode Selection - 根据引擎类型显示不同选项 */}
+              <OptionGroup label="生成模式" contentClassName="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {videoEngine === 'veo' ? (
+                  // Veo 引擎：显示 T2V/I2V/R2V 模式
+                  VEO3_MODES.map((mode) => (
+                    <button
+                      key={mode.id}
+                      onClick={() => {
+                        setVeo3Mode(mode.id as Veo3Mode);
+                        // 清空超出限制的图片
+                        if (files.length > mode.maxImages) {
+                          setFiles(files.slice(0, mode.maxImages));
+                        }
+                      }}
+                      className={cn(
+                        'flex w-full flex-col items-center gap-1.5 px-2 py-2.5 rounded-lg border transition-all',
+                        veo3Mode === mode.id
+                          ? 'bg-foreground text-background border-transparent'
+                          : 'bg-card/60 text-foreground/70 border-border/70 hover:bg-card/80 hover:text-foreground'
+                      )}
+                    >
+                      <mode.icon className="w-4 h-4" />
+                      <span className="text-xs font-medium">{mode.label}</span>
+                    </button>
+                  ))
+                ) : (
+                  // Sora 引擎：显示普通/Remix/分镜模式
+                  CREATION_MODES.map((mode) => (
+                    <button
+                      key={mode.id}
+                      onClick={() => setCreationMode(mode.id as CreationMode)}
+                      className={cn(
+                        'flex w-full flex-col items-center gap-1.5 px-2 py-2.5 rounded-lg border transition-all',
+                        creationMode === mode.id
+                          ? 'bg-foreground text-background border-transparent'
+                          : 'bg-card/60 text-foreground/70 border-border/70 hover:bg-card/80 hover:text-foreground'
+                      )}
+                    >
+                      <mode.icon className="w-4 h-4" />
+                      <span className="text-xs font-medium">{mode.label}</span>
+                    </button>
+                  ))
+                )}
               </OptionGroup>
 
-              {/* Model Selection */}
+              {/* Model Selection - 显示过滤后的模型 */}
               <OptionGroup
-                label="模型"
+                label="模型选择"
                 contentClassName="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1"
               >
-                {availableModels.map((model) => (
+                {filteredModels.map((model) => (
                   <button
                     key={model.id}
                     type="button"
@@ -826,7 +1489,14 @@ export default function VideoGenerationPage() {
               {/* Aspect Ratio */}
               {currentModel && (
               <OptionGroup label="画面比例" contentClassName="grid grid-cols-2 gap-2">
-                {currentModel.aspectRatios.map((r) => (
+                {[...currentModel.aspectRatios].sort((a, b) => {
+                  // landscape first, then portrait
+                  if (a.value === 'landscape') return -1;
+                  if (b.value === 'landscape') return 1;
+                  if (a.value === 'portrait') return -1;
+                  if (b.value === 'portrait') return 1;
+                  return 0;
+                }).map((r) => (
                   <button
                     key={r.value}
                     onClick={() => setAspectRatio(r.value)}
@@ -864,60 +1534,302 @@ export default function VideoGenerationPage() {
               </OptionGroup>
               )}
 
-              {/* Mode-specific inputs */}
-              {creationMode === 'normal' && (
+              {/* Mode-specific inputs - Sora 引擎 */}
+              {videoEngine === 'sora' && (
                 <>
-                  {/* 视频风格选择 */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                    <label className="text-xs text-foreground/50 uppercase tracking-wider">视频风格</label>
-                      {selectedStyle && (
-                        <button
-                          onClick={() => setSelectedStyle(null)}
-                          className="text-xs text-foreground/40 hover:text-foreground/70"
-                        >
-                          取消选择
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
-                      {VIDEO_STYLES.map((style) => (
-                        <button
-                          key={style.id}
-                          onClick={() => setSelectedStyle(selectedStyle === style.id ? null : style.id)}
-                          className={cn(
-                            'relative w-20 h-12 rounded-md overflow-hidden border-2 transition-all shrink-0',
-                            selectedStyle === style.id
-                              ? 'border-sky-400 ring-2 ring-sky-400/30'
-                              : 'border-border/70 hover:border-border'
+                  {creationMode === 'normal' && (
+                    <>
+                      {/* 视频风格选择 - 仅 Sora 引擎的普通模式显示 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs text-foreground/50 uppercase tracking-wider">视频风格</label>
+                          {selectedStyle && (
+                            <button
+                              onClick={() => setSelectedStyle(null)}
+                              className="text-xs text-foreground/40 hover:text-foreground/70"
+                            >
+                              取消选择
+                            </button>
                           )}
-                        >
-                          <img
-                            src={style.image}
-                            alt={style.name}
-                            className="w-full h-full object-cover"
-                          />
-                          <div className={cn(
-                            'absolute inset-0 flex items-end justify-center pb-1.5 bg-gradient-to-t from-black/80 to-transparent',
-                            selectedStyle === style.id && 'from-sky-900/70'
-                          )}>
-                            <span className="text-[10px] font-medium text-foreground">{style.name}</span>
+                        </div>
+                        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1">
+                          {VIDEO_STYLES.map((style) => (
+                            <button
+                              key={style.id}
+                              onClick={() => setSelectedStyle(selectedStyle === style.id ? null : style.id)}
+                              className={cn(
+                                'relative w-20 h-12 rounded-md overflow-hidden border-2 transition-all shrink-0',
+                                selectedStyle === style.id
+                                  ? 'border-sky-400 ring-2 ring-sky-400/30'
+                                  : 'border-border/70 hover:border-border'
+                              )}
+                            >
+                              <img
+                                src={style.image}
+                                alt={style.name}
+                                className="w-full h-full object-cover"
+                              />
+                              <div className={cn(
+                                'absolute inset-0 flex items-end justify-center pb-1.5 bg-gradient-to-t from-black/80 to-transparent',
+                                selectedStyle === style.id && 'from-sky-900/70'
+                              )}>
+                                <span className="text-[10px] font-medium text-foreground">{style.name}</span>
+                              </div>
+                              {selectedStyle === style.id && (
+                                <div className="absolute top-1 right-1 w-3.5 h-3.5 bg-sky-500 rounded-full flex items-center justify-center">
+                                  <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                  </svg>
+                                </div>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-foreground/40">可选：点选一个风格应用到生成</p>
+                      </div>
+
+                      {/* 参考素材上传 */}
+                      {currentModel?.features.imageToVideo && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs text-foreground/50 uppercase tracking-wider">参考素材</label>
+                            {files.length > 0 && (
+                              <button
+                                onClick={clearFiles}
+                                className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
+                              >
+                                <Trash2 className="w-3 h-3" /> 清除
+                              </button>
+                            )}
                           </div>
-                          {selectedStyle === style.id && (
-                            <div className="absolute top-1 right-1 w-3.5 h-3.5 bg-sky-500 rounded-full flex items-center justify-center">
-                              <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            className="hidden"
+                            multiple
+                            accept="image/*"
+                            onChange={handleFileUpload}
+                          />
+                          {files.length === 0 ? (
+                            <div className="space-y-2">
+                              <div
+                                ref={uploadAreaRef}
+                                onClick={() => fileInputRef.current?.click()}
+                                tabIndex={0}
+                                className="border border-dashed border-border/70 rounded-lg p-5 text-center cursor-pointer hover:bg-card/70 hover:border-border transition-all focus:outline-none focus:ring-2 focus:ring-ring/30"
+                              >
+                                <Upload className="w-6 h-6 mx-auto text-foreground/40 mb-2" />
+                                <p className="text-sm text-foreground/60">点击上传图片或按 Ctrl+V 粘贴</p>
+                                <p className="text-xs text-foreground/40 mt-0.5">支持 JPG, PNG</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowImagePicker(true);
+                                  loadImageLibrary();
+                                }}
+                                className="w-full py-2 px-3 text-sm text-foreground/70 hover:text-foreground border border-border/50 hover:border-border rounded-lg transition-all flex items-center justify-center gap-2"
+                              >
+                                <User className="w-4 h-4" />
+                                从我的图片库选择
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-4 gap-2">
+                              {files.map((f, i) => (
+                                <div 
+                                  key={i} 
+                                  draggable
+                                  onDragStart={() => handleDragStart(i)}
+                                  onDragOver={(e) => handleDragOver(e, i)}
+                                  onDragEnd={handleDragEnd}
+                                  className={cn(
+                                    "aspect-square rounded-lg overflow-hidden border border-border/70 relative group cursor-move transition-all",
+                                    draggedIndex === i && "opacity-50 scale-95"
+                                  )}
+                                >
+                                  {f.mimeType.startsWith('video') ? (
+                                    <video src={f.preview} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <img src={f.preview} className="w-full h-full object-cover" alt="" />
+                                  )}
+                                  <button
+                                    onClick={() => {
+                                      URL.revokeObjectURL(f.preview);
+                                      setFiles(prev => prev.filter((_, idx) => idx !== i));
+                                    }}
+                                    className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-black/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                  >
+                                    <Trash2 className="w-3 h-3 text-white" />
+                                  </button>
+                                </div>
+                              ))}
                             </div>
                           )}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-[10px] text-foreground/40">可选：点选一个风格应用到生成</p>
-                  </div>
+                        </div>
+                      )}
 
-                  {currentModel?.features.imageToVideo && (
+                      {/* 创作描述 */}
+                      <div className="space-y-2 relative">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs text-foreground/50 uppercase tracking-wider">创作描述</label>
+                          <button
+                            type="button"
+                            onClick={handleEnhancePrompt}
+                            disabled={enhancing || !prompt.trim()}
+                            className={cn(
+                              'flex items-center gap-1 px-2 py-1 rounded text-xs transition-all',
+                              enhancing || !prompt.trim()
+                                ? 'text-foreground/40 cursor-not-allowed'
+                                : 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
+                            )}
+                          >
+                            {enhancing ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Wand2 className="w-3 h-3" />
+                            )}
+                            <span>增强</span>
+                          </button>
+                        </div>
+                        <textarea
+                          ref={promptTextareaRef}
+                          value={prompt}
+                          onChange={(e) => handlePromptChange(e, setPrompt)}
+                          placeholder="描述你想要生成的内容，越详细效果越好..."
+                          className="w-full h-20 px-3 py-2.5 bg-input/70 border border-border/70 text-foreground rounded-lg resize-none focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground/60 text-sm"
+                        />
+                        {characterCards.length > 0 && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-foreground/50 uppercase tracking-wider">角色卡</span>
+                              <span className="text-[10px] text-foreground/40">点击添加到描述</span>
+                            </div>
+                            <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                              {characterCards.map((card) => (
+                                <button
+                                  key={card.id}
+                                  type="button"
+                                  onClick={() => handleAddCharacter(card.characterName)}
+                                  className="flex items-center gap-2 px-2 py-1.5 bg-card/60 hover:bg-card/80 border border-border/70 hover:border-emerald-400/30 rounded-full text-xs text-foreground/80 transition-all shrink-0"
+                                >
+                                  <div className="w-5 h-5 rounded-full overflow-hidden bg-gradient-to-br from-emerald-500/20 to-sky-500/20 shrink-0">
+                                    {card.avatarUrl ? (
+                                      <img src={card.avatarUrl} alt="" className="w-full h-full object-cover" />
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center">
+                                        <User className="w-3 h-3 text-emerald-300/60" />
+                                      </div>
+                                    )}
+                                  </div>
+                                  <span className="max-w-[120px] truncate">@{card.characterName}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {creationMode === 'remix' && (
+                    <>
+                      <div className="space-y-2">
+                        <label className="text-xs text-foreground/50 uppercase tracking-wider flex items-center gap-2">
+                          <LinkIcon className="w-3 h-3" />
+                          视频分享链接
+                        </label>
+                        <input
+                          type="text"
+                          value={remixUrl}
+                          onChange={(e) => setRemixUrl(e.target.value)}
+                          placeholder="https://sora.chatgpt.com/p/s_xxx 或 s_xxx"
+                          className="w-full px-3 py-2.5 bg-input/70 border border-border/70 text-foreground rounded-lg focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground/60 text-sm"
+                        />
+                        <p className="text-xs text-foreground/40">
+                          输入 Sora 视频分享链接或ID，基于该视频继续创作
+                        </p>
+                      </div>
+                      <div className="space-y-2 relative">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs text-foreground/50 uppercase tracking-wider flex items-center gap-2">
+                            修改描述
+                          </label>
+                          <button
+                            type="button"
+                            onClick={handleEnhancePrompt}
+                            disabled={enhancing || !prompt.trim()}
+                            className={cn(
+                              'flex items-center gap-1 px-2 py-1 rounded text-xs transition-all',
+                              enhancing || !prompt.trim()
+                                ? 'text-foreground/40 cursor-not-allowed'
+                                : 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
+                            )}
+                          >
+                            {enhancing ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Wand2 className="w-3 h-3" />
+                            )}
+                            <span>增强</span>
+                          </button>
+                        </div>
+                        <textarea
+                          ref={remixPromptRef}
+                          value={prompt}
+                          onChange={(e) => handlePromptChange(e, setPrompt)}
+                          placeholder="描述你想要的修改，如：改成水墨画风格"
+                          className="w-full h-20 px-3 py-2.5 bg-input/70 border border-border/70 text-foreground rounded-lg resize-none focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground/60 text-sm"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {creationMode === 'storyboard' && (
                     <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs text-foreground/50 uppercase tracking-wider flex items-center gap-2">
+                          <Film className="w-3 h-3" />
+                          分镜脚本
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleEnhancePrompt}
+                          disabled={enhancing || !storyboardPrompt.trim()}
+                          className={cn(
+                            'flex items-center gap-1 px-2 py-1 rounded text-xs transition-all',
+                            enhancing || !storyboardPrompt.trim()
+                              ? 'text-foreground/40 cursor-not-allowed'
+                              : 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
+                          )}
+                        >
+                          {enhancing ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Wand2 className="w-3 h-3" />
+                          )}
+                          <span>增强</span>
+                        </button>
+                      </div>
+                      <textarea
+                        value={storyboardPrompt}
+                        onChange={(e) => setStoryboardPrompt(e.target.value)}
+                        placeholder={`[5.0s]猫猫从飞机上跳伞\n[5.0s]猫猫降落\n[10.0s]猫猫在田野奔跑`}
+                        className="w-full h-28 px-3 py-2.5 bg-input/70 border border-border/70 text-foreground rounded-lg resize-none focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground/60 text-sm font-mono"
+                      />
+                      <p className="text-xs text-foreground/40">
+                        格式：[时长]描述，每行一个镜头，如 [5.0s]描述内容
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Mode-specific inputs - Veo 引擎 */}
+              {videoEngine === 'veo' && (
+                <>
+                  {/* 参考素材上传 - 根据 Veo 模式显示不同提示 */}
+                  <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <label className="text-xs text-foreground/50 uppercase tracking-wider">参考素材</label>
                         {files.length > 0 && (
@@ -938,29 +1850,81 @@ export default function VideoGenerationPage() {
                         onChange={handleFileUpload}
                       />
                       {files.length === 0 ? (
-                        <div
-                          onClick={() => fileInputRef.current?.click()}
-                          className="border border-dashed border-border/70 rounded-lg p-5 text-center cursor-pointer hover:bg-card/70 hover:border-border transition-all"
-                        >
-                          <Upload className="w-6 h-6 mx-auto text-foreground/40 mb-2" />
-                          <p className="text-sm text-foreground/60">点击上传图片</p>
-                          <p className="text-xs text-foreground/40 mt-0.5">支持 JPG, PNG</p>
+                        <div className="space-y-2">
+                          <div
+                            ref={uploadAreaRef}
+                            onClick={() => fileInputRef.current?.click()}
+                            tabIndex={0}
+                            className="border border-dashed border-border/70 rounded-lg p-5 text-center cursor-pointer hover:bg-card/70 hover:border-border transition-all focus:outline-none focus:ring-2 focus:ring-ring/30"
+                          >
+                            <Upload className="w-6 h-6 mx-auto text-foreground/40 mb-2" />
+                            <p className="text-sm text-foreground/60">点击上传图片或按 Ctrl+V 粘贴</p>
+                            <p className="text-xs text-foreground/40 mt-0.5">
+                              {veo3Mode === 't2v' && '文生视频模式无需上传图片'}
+                              {veo3Mode === 'i2v' && '上传 1 张图片（首帧）或 2 张图片（首尾帧）'}
+                              {veo3Mode === 'r2v' && '上传最多 3 张图片进行融合'}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowImagePicker(true);
+                              loadImageLibrary();
+                            }}
+                            className="w-full py-2 px-3 text-sm text-foreground/70 hover:text-foreground border border-border/50 hover:border-border rounded-lg transition-all flex items-center justify-center gap-2"
+                          >
+                            <User className="w-4 h-4" />
+                            从我的图片库选择
+                          </button>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-4 gap-2">
-                          {files.map((f, i) => (
-                            <div key={i} className="aspect-square rounded-lg overflow-hidden border border-border/70">
-                              {f.mimeType.startsWith('video') ? (
-                                <video src={f.preview} className="w-full h-full object-cover" />
-                              ) : (
-                                <img src={f.preview} className="w-full h-full object-cover" alt="" />
-                              )}
-                            </div>
-                          ))}
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                            {files.map((f, i) => (
+                              <div 
+                                key={i} 
+                                draggable
+                                onDragStart={() => handleDragStart(i)}
+                                onDragOver={(e) => handleDragOver(e, i)}
+                                onDragEnd={handleDragEnd}
+                                className={cn(
+                                  "aspect-square rounded-lg overflow-hidden border border-border/70 relative group cursor-move transition-all",
+                                  draggedIndex === i && "opacity-50 scale-95"
+                                )}
+                              >
+                                {f.mimeType.startsWith('video') ? (
+                                  <video src={f.preview} className="w-full h-full object-cover" />
+                                ) : (
+                                  <img src={f.preview} className="w-full h-full object-cover" alt="" />
+                                )}
+                                <button
+                                  onClick={() => {
+                                    URL.revokeObjectURL(f.preview);
+                                    setFiles(prev => prev.filter((_, idx) => idx !== i));
+                                  }}
+                                  className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-black/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                >
+                                  <Trash2 className="w-3 h-3 text-white" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowImagePicker(true);
+                              loadImageLibrary();
+                            }}
+                            className="w-full py-2 px-3 text-sm text-foreground/70 hover:text-foreground border border-border/50 hover:border-border rounded-lg transition-all flex items-center justify-center gap-2"
+                          >
+                            <User className="w-4 h-4" />
+                            从我的图片库选择
+                          </button>
                         </div>
                       )}
                     </div>
-                  )}
+
+                  {/* 创作描述 */}
                   <div className="space-y-2 relative">
                     <div className="flex items-center justify-between">
                       <label className="text-xs text-foreground/50 uppercase tracking-wider">创作描述</label>
@@ -990,128 +1954,8 @@ export default function VideoGenerationPage() {
                       placeholder="描述你想要生成的内容，越详细效果越好..."
                       className="w-full h-20 px-3 py-2.5 bg-input/70 border border-border/70 text-foreground rounded-lg resize-none focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground/60 text-sm"
                     />
-                    {characterCards.length > 0 && (
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] text-foreground/50 uppercase tracking-wider">角色卡</span>
-                          <span className="text-[10px] text-foreground/40">点击添加到描述</span>
-                        </div>
-                        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-                          {characterCards.map((card) => (
-                          <button
-                            key={card.id}
-                            type="button"
-                            onClick={() => handleAddCharacter(card.characterName)}
-                            className="flex items-center gap-2 px-2 py-1.5 bg-card/60 hover:bg-card/80 border border-border/70 hover:border-emerald-400/30 rounded-full text-xs text-foreground/80 transition-all shrink-0"
-                          >
-                            <div className="w-5 h-5 rounded-full overflow-hidden bg-gradient-to-br from-emerald-500/20 to-sky-500/20 shrink-0">
-                              {card.avatarUrl ? (
-                                <img src={card.avatarUrl} alt="" className="w-full h-full object-cover" />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center">
-                                  <User className="w-3 h-3 text-emerald-300/60" />
-                                </div>
-                              )}
-                            </div>
-                              <span className="max-w-[120px] truncate">@{card.characterName}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </>
-              )}
-
-              {creationMode === 'remix' && (
-                <>
-                  <div className="space-y-2">
-                    <label className="text-xs text-foreground/50 uppercase tracking-wider flex items-center gap-2">
-                      <LinkIcon className="w-3 h-3" />
-                      视频分享链接
-                    </label>
-                    <input
-                      type="text"
-                      value={remixUrl}
-                      onChange={(e) => setRemixUrl(e.target.value)}
-                      placeholder="https://sora.chatgpt.com/p/s_xxx 或 s_xxx"
-                      className="w-full px-3 py-2.5 bg-input/70 border border-border/70 text-foreground rounded-lg focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground/60 text-sm"
-                    />
-                      <p className="text-xs text-foreground/40">
-                        输入 Sora 视频分享链接或ID，基于该视频继续创作
-                      </p>
-                  </div>
-                  <div className="space-y-2 relative">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs text-foreground/50 uppercase tracking-wider flex items-center gap-2">
-                        修改描述
-                      </label>
-                      <button
-                        type="button"
-                        onClick={handleEnhancePrompt}
-                        disabled={enhancing || !prompt.trim()}
-                        className={cn(
-                          'flex items-center gap-1 px-2 py-1 rounded text-xs transition-all',
-                          enhancing || !prompt.trim()
-                            ? 'text-foreground/40 cursor-not-allowed'
-                            : 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
-                        )}
-                      >
-                        {enhancing ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <Wand2 className="w-3 h-3" />
-                        )}
-                        <span>增强</span>
-                      </button>
-                    </div>
-                    <textarea
-                      ref={remixPromptRef}
-                      value={prompt}
-                      onChange={(e) => handlePromptChange(e, setPrompt)}
-                      placeholder="描述你想要的修改，如：改成水墨画风格"
-                      className="w-full h-20 px-3 py-2.5 bg-input/70 border border-border/70 text-foreground rounded-lg resize-none focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground/60 text-sm"
-                    />
-                  </div>
-                </>
-              )}
-
-              {creationMode === 'storyboard' && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs text-foreground/50 uppercase tracking-wider flex items-center gap-2">
-                      <Film className="w-3 h-3" />
-                      分镜脚本
-                    </label>
-                    <button
-                      type="button"
-                      onClick={handleEnhancePrompt}
-                      disabled={enhancing || !storyboardPrompt.trim()}
-                      className={cn(
-                        'flex items-center gap-1 px-2 py-1 rounded text-xs transition-all',
-                          enhancing || !storyboardPrompt.trim()
-                            ? 'text-foreground/40 cursor-not-allowed'
-                            : 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
-                        )}
-                    >
-                      {enhancing ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <Wand2 className="w-3 h-3" />
-                      )}
-                      <span>增强</span>
-                    </button>
-                  </div>
-                  <textarea
-                    value={storyboardPrompt}
-                    onChange={(e) => setStoryboardPrompt(e.target.value)}
-                    placeholder={`[5.0s]猫猫从飞机上跳伞\n[5.0s]猫猫降落\n[10.0s]猫猫在田野奔跑`}
-                    className="w-full h-28 px-3 py-2.5 bg-input/70 border border-border/70 text-foreground rounded-lg resize-none focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground/60 text-sm font-mono"
-                  />
-                  <p className="text-xs text-foreground/40">
-                    格式：[时长]描述，每行一个镜头，如 [5.0s]描述内容
-                  </p>
-                </div>
               )}
 
               {/* Keep Prompt Checkbox */}
@@ -1195,9 +2039,72 @@ export default function VideoGenerationPage() {
             generations={generations}
             tasks={tasks}
             onRemoveTask={handleRemoveTask}
+            onRestoreParams={handleRestoreParams}
+            onRestoreTaskParams={handleRestoreTaskParams}
+            onLoadMore={handleLoadMoreHistory}
+            hasMore={hasMoreHistory}
+            loading={loadingHistory}
+            onDeleteGeneration={handleDeleteGeneration}
           />
         </div>
       </div>
+
+      {/* Image Picker Dialog */}
+      {showImagePicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="text-lg font-semibold text-foreground">选择图片</h3>
+              <button
+                onClick={() => setShowImagePicker(false)}
+                className="p-2 hover:bg-muted rounded-lg transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {loadingLibrary ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 animate-spin text-foreground/40" />
+                </div>
+              ) : imageLibrary.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-foreground/40">
+                  <AlertCircle className="w-12 h-12 mb-3" />
+                  <p>暂无图片</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                  {imageLibrary.map((gen) => (
+                    <button
+                      key={gen.id}
+                      onClick={() => {
+                        handleSelectFromLibrary(gen);
+                        setShowImagePicker(false);
+                      }}
+                      className="aspect-square rounded-lg overflow-hidden border-2 border-border/50 hover:border-sky-400 transition-all group relative"
+                    >
+                      <img
+                        src={`/api/media/${gen.id}`}
+                        alt={gen.prompt || ''}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-sky-500 rounded-full p-2">
+                          <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

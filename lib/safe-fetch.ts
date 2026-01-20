@@ -18,6 +18,17 @@ export interface FetchBinaryOptions {
 const BLOCKED_HOSTS = new Set(['localhost']);
 const BLOCKED_SUFFIXES = ['.localhost', '.local', '.internal'];
 
+// Trusted domains that should bypass IP checks (e.g., Google Cloud Storage)
+const TRUSTED_DOMAINS = [
+  'storage.googleapis.com',
+  'storage.cloud.google.com',
+];
+
+function isTrustedDomain(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return TRUSTED_DOMAINS.some(domain => host === domain || host.endsWith(`.${domain}`));
+}
+
 function isBlockedHostname(hostname: string): boolean {
   const host = hostname.toLowerCase();
   if (BLOCKED_HOSTS.has(host)) return true;
@@ -82,6 +93,11 @@ export async function assertSafeUrl(url: URL, origin?: string): Promise<void> {
   }
 
   if (origin && isSameOrigin(url, origin)) {
+    return;
+  }
+
+  // Skip IP checks for trusted domains (e.g., Google Cloud Storage)
+  if (isTrustedDomain(url.hostname)) {
     return;
   }
 

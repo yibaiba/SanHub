@@ -140,25 +140,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '账号已被禁用' }, { status: 403 });
     }
 
-    // 检查余额
-    if (user.balance < model.costPerGeneration) {
+    // 检查余额（管理员豁免）
+    const isAdmin = user.role === 'admin';
+    if (!isAdmin && user.balance < model.costPerGeneration) {
       return NextResponse.json(
         { error: `余额不足，需要至少 ${model.costPerGeneration} 积分` },
         { status: 402 }
       );
     }
 
-    try {
-      await updateUserBalance(user.id, -model.costPerGeneration, 'strict');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Insufficient balance';
-      if (message.includes('Insufficient balance')) {
-        return NextResponse.json(
-          { error: `余额不足，需要至少 ${model.costPerGeneration} 积分` },
-          { status: 402 }
-        );
+    // 扣除积分（管理员豁免）
+    if (!isAdmin) {
+      try {
+        await updateUserBalance(user.id, -model.costPerGeneration, 'strict');
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Insufficient balance';
+        if (message.includes('Insufficient balance')) {
+          return NextResponse.json(
+            { error: `余额不足，需要至少 ${model.costPerGeneration} 积分` },
+            { status: 402 }
+          );
+        }
+        throw err;
       }
-      throw err;
     }
 
     // 处理参考图
