@@ -11,7 +11,12 @@ interface ProvidersProps {
 
 export function Providers({ children, initialSiteConfig }: ProvidersProps) {
   return (
-    <SessionProvider>
+    <SessionProvider
+      // Refetch session every 5 minutes to keep it fresh
+      refetchInterval={5 * 60}
+      // Refetch when window regains focus
+      refetchOnWindowFocus={true}
+    >
       <SiteConfigProvider initialConfig={initialSiteConfig}>
         {children}
         <Toaster />

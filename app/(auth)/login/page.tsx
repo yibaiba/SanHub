@@ -21,12 +21,12 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // 已登录用户自动跳转
+  // 已登录用户自动跳转 - 使用 window.location 确保完整刷新
   useEffect(() => {
     if (status === 'authenticated' && session) {
-      router.replace('/image');
+      window.location.href = '/image';
     }
-  }, [status, session, router]);
+  }, [status, session]);
 
   const handleCaptchaChange = useCallback((id: string, code: string) => {
     setCaptchaId(id);

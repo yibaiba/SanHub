@@ -603,8 +603,10 @@ export async function verifyPassword(
   const user = await getUserByEmail(email);
   if (!user) return null;
 
-  // 禁用用户不能登录
-  if (user.disabled) return null;
+  // Disabled users cannot login - throw explicit error
+  if (user.disabled) {
+    throw new Error('账号已被禁用，请联系管理员');
+  }
 
   const valid = await bcrypt.compare(password, user.password);
   if (!valid) return null;

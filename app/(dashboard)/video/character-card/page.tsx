@@ -60,7 +60,7 @@ export default function CharacterCardPage() {
   // 时间戳滑块 (最多5秒范围)
   const [timestampStart, setTimestampStart] = useState(0);
   const [timestampEnd, setTimestampEnd] = useState(3);
-  const [videoDuration, setVideoDuration] = useState(16); // 视频时长，最大16秒
+  const [videoDuration, setVideoDuration] = useState(15); // 视频时长，最大15秒
 
   // 加载角色卡列表（包括已完成和进行中的）
   const loadCharacterCards = useCallback(async () => {
@@ -188,10 +188,10 @@ export default function CharacterCardPage() {
         video.onerror = () => reject(new Error('无法读取视频时长'));
       });
 
-      // 限制视频时长最大16秒
-      if (duration > 16) {
+      // 限制视频时长最大15秒
+      if (duration > 15) {
         URL.revokeObjectURL(previewUrl);
-        setError('视频时长不能超过 16 秒');
+        setError('视频时长不能超过 15 秒');
         return;
       }
       
@@ -199,7 +199,7 @@ export default function CharacterCardPage() {
       const firstFrame = await extractFirstFrame(previewUrl);
       
       // 设置视频时长和重置滑块
-      const actualDuration = Math.min(duration, 16);
+      const actualDuration = Math.min(duration, 15);
       setVideoDuration(actualDuration);
       setTimestampStart(0);
       // 根据视频时长智能设置结束时间（推荐3秒范围）
@@ -334,8 +334,8 @@ export default function CharacterCardPage() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
-      <div className="flex items-start justify-between">
+    <div className="flex flex-col h-[calc(100vh-100px)] max-w-7xl mx-auto">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4 shrink-0">
         <div>
           <h1 className="text-3xl font-extralight text-foreground">角色卡生成</h1>
           <p className="text-foreground/50 mt-1 font-light">
@@ -354,306 +354,209 @@ export default function CharacterCardPage() {
         )}
       </div>
 
-      {/* 每日限制达到提示 */}
       {isCharacterCardLimitReached && (
-        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-3">
+        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-3 mb-4 shrink-0">
           <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
           <p className="text-sm text-red-300">今日角色卡生成次数已达上限，请明天再试</p>
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 左侧 - 生成面板 */}
-        <div className="lg:col-span-1">
-          <div className={cn(
-            "bg-card/60 border border-border/70 rounded-2xl overflow-hidden backdrop-blur-sm",
-            isCharacterCardLimitReached && "opacity-50 pointer-events-none"
-          )}>
-            {/* Header */}
-            <div className="px-5 py-4 border-b border-border/70 bg-gradient-to-r from-emerald-500/5 to-sky-500/5">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 bg-gradient-to-br from-emerald-500/30 to-sky-500/30 rounded-lg flex items-center justify-center">
-                  <User className="w-4 h-4 text-emerald-400" />
-                </div>
-                <div>
-                  <h2 className="text-base font-medium text-foreground">角色卡创建</h2>
-                  <p className="text-xs text-foreground/40">从视频提取角色</p>
-                </div>
+      <div className="flex-1 overflow-auto min-h-0 mb-4">
+        <div className="surface overflow-hidden">
+          <div className="p-4 sm:p-6 border-b border-border/70">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-card/60 border border-border/70 rounded-xl flex items-center justify-center">
+                <User className="w-5 h-5 text-foreground" />
               </div>
-            </div>
-
-            <div className="px-5 py-4 space-y-4">
-              {/* 视频上传 */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs text-foreground/50 uppercase tracking-wider">上传视频</label>
-                  {videoFile && (
-                    <button
-                      onClick={clearVideo}
-                      className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
-                    >
-                      <Trash2 className="w-3 h-3" /> 清除
-                    </button>
-                  )}
-                </div>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  className="hidden"
-                  accept="video/mp4"
-                  onChange={handleFileUpload}
-                />
-                {!videoFile ? (
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="border border-dashed border-border/70 rounded-lg p-6 text-center cursor-pointer hover:bg-card/60 hover:border-emerald-500/30 transition-all group"
-                  >
-                    <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-gradient-to-br from-emerald-500/10 to-sky-500/10 flex items-center justify-center group-hover:from-emerald-500/20 group-hover:to-sky-500/20 transition-all">
-                      <Upload className="w-5 h-5 text-emerald-400/60 group-hover:text-emerald-400 transition-colors" />
-                    </div>
-                    <p className="text-sm text-foreground/60 group-hover:text-foreground/80 transition-colors">点击上传视频</p>
-                    <p className="text-xs text-foreground/30 mt-1">MP4 格式 · 最长 16 秒 · 最大 15MB</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {/* 视频预览 */}
-                    <div className="relative aspect-video rounded-lg overflow-hidden border border-border/70">
-                      <video
-                        src={videoFile.preview}
-                        className="w-full h-full object-cover"
-                        controls
-                      />
-                    </div>
-                    {/* 第一帧预览 */}
-                    <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-emerald-500/10 to-sky-500/10 rounded-lg border border-emerald-500/20">
-                      <div className="w-12 h-12 rounded-lg overflow-hidden border border-border/70 shrink-0">
-                        <img
-                          src={videoFile.firstFrame}
-                          alt="Video first frame"
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                      <div>
-                        <p className="text-xs text-foreground/80">角色卡封面</p>
-                        <p className="text-[10px] text-foreground/40">将使用视频第一帧作为角色卡图案</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+              <div>
+                <h2 className="text-lg font-medium text-foreground">我的角色卡</h2>
+                <p className="text-sm text-foreground/40">
+                  {characterCards.filter((c) => !pendingTasks.some((t) => t.id === c.id)).length + pendingTasks.length} 个角色卡
+                </p>
               </div>
-
-              {/* 时间戳选择 - 仅在有视频时显示 */}
-              {videoFile && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs text-foreground/50 uppercase tracking-wider">提取区间</label>
-                    <span className="text-xs text-foreground/40 font-mono">
-                      {timestampStart.toFixed(1)}s - {timestampEnd.toFixed(1)}s
-                    </span>
-                  </div>
-                  <div className="p-3 bg-card/60 rounded-lg space-y-3">
-                    {/* 可视化时间轴 */}
-                    <div className="relative h-3 bg-card/70 rounded-full overflow-hidden">
-                      <div
-                        className="absolute h-full bg-gradient-to-r from-emerald-500 to-sky-500 rounded-full transition-all"
-                        style={{
-                          left: `${(timestampStart / videoDuration) * 100}%`,
-                          width: `${((timestampEnd - timestampStart) / videoDuration) * 100}%`,
-                        }}
-                      />
-                      {/* 时间刻度 */}
-                      <div className="absolute inset-0 flex justify-between px-1 items-center pointer-events-none">
-                        {Array.from({ length: Math.min(Math.ceil(videoDuration) + 1, 16) }, (_, i) => (
-                          <div key={i} className="w-px h-1.5 bg-card/80" />
-                        ))}
-                      </div>
-                    </div>
-                    {/* 双滑块控制 */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[10px] text-foreground/40">起始</span>
-                          <span className="text-[10px] text-emerald-400 font-mono">{timestampStart.toFixed(1)}s</span>
-                        </div>
-                        <input
-                          type="range"
-                          min={0}
-                          max={Math.min(timestampEnd - 0.5, videoDuration - 0.5)}
-                          step={0.5}
-                          value={timestampStart}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            setTimestampStart(val);
-                            if (timestampEnd - val > 5) setTimestampEnd(val + 5);
-                          }}
-                          className="w-full h-1.5 accent-emerald-500 cursor-pointer"
-                        />
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[10px] text-foreground/40">结束</span>
-                          <span className="text-[10px] text-sky-400 font-mono">{timestampEnd.toFixed(1)}s</span>
-                        </div>
-                        <input
-                          type="range"
-                          min={Math.max(timestampStart + 0.5, 0.5)}
-                          max={videoDuration}
-                          step={0.5}
-                          value={timestampEnd}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            setTimestampEnd(val);
-                            if (val - timestampStart > 5) setTimestampStart(val - 5);
-                          }}
-                          className="w-full h-1.5 accent-sky-500 cursor-pointer"
-                        />
-                      </div>
-                    </div>
-                    <p className="text-[10px] text-foreground/30 text-center">
-                      区间 {(timestampEnd - timestampStart).toFixed(1)}s / 最大 5s · 视频 {videoDuration.toFixed(1)}s
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* 角色信息（可选） */}
-              <div className="space-y-3">
-                <label className="text-xs text-foreground/50 uppercase tracking-wider">角色信息（可选）</label>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[10px] text-foreground/40 mb-1.5 block">用户名</label>
-                    <input
-                      type="text"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
-                      placeholder="my_character"
-                      className="w-full px-3 py-2 bg-card/60 border border-border/70 text-foreground rounded-lg focus:outline-none focus:border-emerald-500/30 placeholder:text-foreground/30 text-sm transition-colors"
-                      maxLength={32}
-                    />
-                    <p className="text-[10px] text-foreground/30 mt-1">仅字母、数字、下划线</p>
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-foreground/40 mb-1.5 block">显示名称</label>
-                    <input
-                      type="text"
-                      value={displayName}
-                      onChange={(e) => setDisplayName(e.target.value)}
-                      placeholder="My Character"
-                      className="w-full px-3 py-2 bg-card/60 border border-border/70 text-foreground rounded-lg focus:outline-none focus:border-emerald-500/30 placeholder:text-foreground/30 text-sm transition-colors"
-                      maxLength={64}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[10px] text-foreground/40 mb-1.5 block">人物介绍</label>
-                  <textarea
-                    value={instructionSet}
-                    onChange={(e) => setInstructionSet(e.target.value)}
-                    placeholder="描述角色的性格、特点等..."
-                    className="w-full h-16 px-3 py-2 bg-card/60 border border-border/70 text-foreground rounded-lg resize-none focus:outline-none focus:border-emerald-500/30 placeholder:text-foreground/30 text-sm transition-colors"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-foreground/40 mb-1.5 block">安全指令</label>
-                  <textarea
-                    value={safetyInstructionSet}
-                    onChange={(e) => setSafetyInstructionSet(e.target.value)}
-                    placeholder="安全相关的指令..."
-                    className="w-full h-16 px-3 py-2 bg-card/60 border border-border/70 text-foreground rounded-lg resize-none focus:outline-none focus:border-emerald-500/30 placeholder:text-foreground/30 text-sm transition-colors"
-                  />
-                </div>
-              </div>
-
-              {/* 进度消息 */}
-              {progressMessages.length > 0 && (
-                <div className="space-y-1 p-3 bg-card/60 rounded-lg max-h-40 overflow-y-auto">
-                  {progressMessages.map((msg, i) => (
-                    <p key={i} className="text-xs text-foreground/60 font-mono">{msg}</p>
-                  ))}
-                </div>
-              )}
-
-              {/* Error */}
-              {error && (
-                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                  <p className="text-sm text-red-400">{error}</p>
-                </div>
-              )}
-
-              {/* Generate Button */}
-              <button
-                onClick={handleGenerate}
-                disabled={submitting || !videoFile}
-                className={cn(
-                  'w-full flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-medium transition-all',
-                  submitting || !videoFile
-                    ? 'bg-card/70 text-foreground/50 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-emerald-500 to-sky-500 text-foreground hover:opacity-90'
-                )}
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>生成中...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    <span>生成角色卡</span>
-                  </>
-                )}
-              </button>
             </div>
           </div>
-        </div>
 
-        {/* 右侧 - 角色卡列表 */}
-        <div className="lg:col-span-2">
-          <div className="bg-card/60 border border-border/70 rounded-2xl overflow-hidden backdrop-blur-sm">
-            <div className="px-5 py-4 border-b border-border/70 bg-gradient-to-r from-sky-500/5 to-emerald-500/5">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 bg-gradient-to-br from-sky-500/30 to-emerald-500/30 rounded-lg flex items-center justify-center">
-                  <User className="w-4 h-4 text-sky-400" />
-                </div>
-                <div>
-                  <h2 className="text-base font-medium text-foreground">我的角色卡</h2>
-                  <p className="text-xs text-foreground/40">{characterCards.filter((c) => !pendingTasks.some((t) => t.id === c.id)).length + pendingTasks.length} 个角色卡</p>
-                </div>
+          <div className="p-4 sm:p-6">
+            {loadingCards ? (
+              <div className="flex items-center justify-center h-48">
+                <Loader2 className="w-6 h-6 animate-spin text-foreground/30" />
               </div>
-            </div>
-
-            <div className="p-5">
-              {loadingCards ? (
-                <div className="flex items-center justify-center h-48">
-                  <Loader2 className="w-6 h-6 animate-spin text-foreground/30" />
+            ) : characterCards.length === 0 && pendingTasks.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-48 border border-dashed border-border/70 rounded-xl bg-gradient-to-br from-emerald-500/5 to-sky-500/5">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-sky-500/10 flex items-center justify-center mb-3">
+                  <User className="w-7 h-7 text-emerald-400/40" />
                 </div>
-              ) : characterCards.length === 0 && pendingTasks.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-48 border border-dashed border-border/70 rounded-xl bg-gradient-to-br from-emerald-500/5 to-sky-500/5">
-                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-sky-500/10 flex items-center justify-center mb-3">
-                    <User className="w-7 h-7 text-emerald-400/40" />
-                  </div>
-                  <p className="text-foreground/50 text-sm">暂无角色卡</p>
-                  <p className="text-foreground/30 text-xs mt-1">上传视频开始创建你的第一个角色卡</p>
+                <p className="text-foreground/50 text-sm">暂无角色卡</p>
+                <p className="text-foreground/30 text-xs mt-1">上传视频开始创建你的第一个角色卡</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {pendingTasks.map((task) => {
+                  return <PendingTaskItem key={task.id} task={task} />;
+                })}
+                {characterCards
+                  .filter((card) => {
+                    const isDuplicate = pendingTasks.some((t) => t.id === card.id);
+                    return !isDuplicate;
+                  })
+                  .map((card) => {
+                    return <CharacterCardItem key={card.id} card={card} onDelete={handleDeleteCard} />;
+                  })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className={cn(
+        "surface shrink-0 overflow-visible",
+        isCharacterCardLimitReached && "opacity-50 pointer-events-none"
+      )}>
+        <div className="p-4">
+          <div className="flex gap-4">
+            {/* 左侧：视频上传区 */}
+            <div
+              onClick={() => !videoFile && fileInputRef.current?.click()}
+              className={cn(
+                'w-24 h-20 shrink-0 border-2 border-dashed rounded-lg flex flex-col items-center justify-center transition-all',
+                videoFile ? 'border-border/70 bg-card/60' : 'border-border/70 hover:border-emerald-500/30 hover:bg-card/60 cursor-pointer'
+              )}
+            >
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept="video/mp4"
+                onChange={handleFileUpload}
+              />
+              {videoFile ? (
+                <div className="relative w-full h-full">
+                  <img src={videoFile.firstFrame} alt="" className="w-full h-full object-cover rounded-md" />
+                  <button
+                    onClick={(e) => { e.stopPropagation(); clearVideo(); }}
+                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600"
+                  >
+                    <X className="w-3 h-3 text-white" />
+                  </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {/* 内存中的任务（优先显示，有实时状态） */}
-                  {pendingTasks.map((task) => {
-                    return <PendingTaskItem key={task.id} task={task} />;
-                  })}
-                  {/* 数据库中的角色卡（去重：排除已在 pendingTasks 中的） */}
-                  {characterCards
-                    .filter((card) => {
-                      const isDuplicate = pendingTasks.some((t) => t.id === card.id);
-                      return !isDuplicate;
-                    })
-                    .map((card) => {
-                      return <CharacterCardItem key={card.id} card={card} onDelete={handleDeleteCard} />;
-                    })}
-                </div>
+                <>
+                  <Upload className="w-5 h-5 text-foreground/40 mb-1" />
+                  <span className="text-[10px] text-foreground/40">点击上传视频</span>
+                </>
               )}
             </div>
+
+            {/* 右侧：角色信息输入 */}
+            <div className="flex-1 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-foreground/50">角色信息（可选）</label>
+                {videoFile && (
+                  <span className="text-[10px] text-foreground/40 font-mono">
+                    区间: {timestampStart.toFixed(1)}s - {timestampEnd.toFixed(1)}s
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
+                  placeholder="my_character"
+                  className="w-full px-3 py-1.5 bg-card/60 border border-border/70 text-foreground rounded-lg focus:outline-none focus:border-emerald-500/30 placeholder:text-foreground/30 text-sm"
+                  maxLength={32}
+                />
+                <input
+                  type="text"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="My Character"
+                  className="w-full px-3 py-1.5 bg-card/60 border border-border/70 text-foreground rounded-lg focus:outline-none focus:border-emerald-500/30 placeholder:text-foreground/30 text-sm"
+                  maxLength={64}
+                />
+              </div>
+              <textarea
+                value={instructionSet}
+                onChange={(e) => setInstructionSet(e.target.value)}
+                placeholder="描述角色的性格、特点等..."
+                className="w-full h-12 px-3 py-1.5 bg-card/60 border border-border/70 text-foreground rounded-lg resize-none focus:outline-none focus:border-emerald-500/30 placeholder:text-foreground/30 text-sm"
+              />
+            </div>
+          </div>
+
+          {/* 底部控制栏 */}
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            {videoFile && (
+              <>
+                <div className="flex items-center gap-2 px-2 py-1 bg-card/60 rounded-lg">
+                  <span className="text-[10px] text-foreground/40">起始</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.min(timestampEnd - 0.5, videoDuration - 0.5)}
+                    step={0.5}
+                    value={timestampStart}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setTimestampStart(val);
+                      if (timestampEnd - val > 5) setTimestampEnd(val + 5);
+                    }}
+                    className="w-16 h-1 accent-emerald-500 cursor-pointer"
+                  />
+                  <span className="text-[10px] text-emerald-400 font-mono w-8">{timestampStart.toFixed(1)}s</span>
+                </div>
+                <div className="flex items-center gap-2 px-2 py-1 bg-card/60 rounded-lg">
+                  <span className="text-[10px] text-foreground/40">结束</span>
+                  <input
+                    type="range"
+                    min={Math.max(timestampStart + 0.5, 0.5)}
+                    max={videoDuration}
+                    step={0.5}
+                    value={timestampEnd}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setTimestampEnd(val);
+                      if (val - timestampStart > 5) setTimestampStart(val - 5);
+                    }}
+                    className="w-16 h-1 accent-sky-500 cursor-pointer"
+                  />
+                  <span className="text-[10px] text-sky-400 font-mono w-8">{timestampEnd.toFixed(1)}s</span>
+                </div>
+              </>
+            )}
+
+            {error && (
+              <div className="flex items-center gap-1.5 text-xs text-red-400">
+                <AlertCircle className="w-3 h-3" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <div className="flex-1" />
+
+            <button
+              onClick={handleGenerate}
+              disabled={submitting || !videoFile}
+              className={cn(
+                'flex items-center gap-2 px-5 py-2 rounded-lg font-medium text-sm transition-all',
+                submitting || !videoFile
+                  ? 'bg-card/60 text-foreground/40 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-emerald-500 to-sky-500 text-foreground hover:opacity-90'
+              )}
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>生成中...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  <span>生成角色卡</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
       </div>
@@ -772,4 +675,3 @@ function CharacterCardItem({ card, onDelete }: { card: CharacterCard; onDelete?:
     </div>
   );
 }
-

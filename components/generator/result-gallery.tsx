@@ -13,6 +13,7 @@ export interface Task {
   id: string;
   prompt: string;
   model?: string;
+  modelId?: string;
   type?: string;
   status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
   progress?: number; // 0-100
@@ -31,6 +32,7 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
   const [selected, setSelected] = useState<Generation | null>(null);
   const [visibleCount, setVisibleCount] = useState(12);
   const renderMoreRef = useRef<HTMLDivElement>(null);
+  const [selectedFailedTask, setSelectedFailedTask] = useState<Task | null>(null);
 
   useEffect(() => {
     setVisibleCount((prev) => {
@@ -100,21 +102,32 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
     setVisibleCount((prev) => Math.min(prev + 12, generations.length));
   };
 
+  useEffect(() => {
+    if (!selectedFailedTask) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSelectedFailedTask(null);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [selectedFailedTask]);
+
   return (
     <>
       <div className="surface overflow-hidden">
         {/* Header */}
         <div className="p-4 sm:p-6 border-b border-border/70">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-card/60 border border-border/70 rounded-xl flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-foreground" />
-            </div>
-            <div>
-              <h2 className="text-lg font-medium text-foreground">生成结果</h2>
-              <p className="text-sm text-foreground/40">
-                {activeTasks.length > 0 ? `${activeTasks.length} 个任务进行中 · ` : ''}
-                {generations.length} 个作品
-              </p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-card/60 border border-border/70 rounded-xl flex items-center justify-center">
+                <Sparkles className="w-5 h-5 text-foreground" />
+              </div>
+              <div>
+                <h2 className="text-lg font-medium text-foreground">生成结果</h2>
+                <p className="text-sm text-foreground/40">
+                  {activeTasks.length > 0 ? `${activeTasks.length} 个任务进行中 · ` : ''}
+                  {generations.length} 个作品
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -129,7 +142,7 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
               <p className="text-foreground/30 text-sm mt-1">开始创作你的第一个作品</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
               {/* 正在进行的任务 */}
               {activeTasks.map((task) => (
                 <div
@@ -189,7 +202,10 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
               {failedTasks.map((task) => (
                 <div
                   key={task.id}
-                  className="group relative aspect-video bg-card/60 rounded-xl overflow-hidden border border-red-500/30"
+                  className={`group relative aspect-video bg-card/60 rounded-xl overflow-hidden border border-red-500/30 ${
+                    task.errorMessage ? 'cursor-pointer' : ''
+                  }`}
+                  onClick={() => task.errorMessage && setSelectedFailedTask(task)}
                 >
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-500/10">
                     <AlertCircle className="w-8 h-8 text-red-300 mb-2" />
@@ -197,15 +213,23 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
                       {task.status === 'cancelled' ? '已取消' : '生成失败'}
                     </p>
                     {task.errorMessage && (
-                      <p className="text-xs text-red-300/70 mt-1 px-4 text-center truncate max-w-full">
-                        {task.errorMessage}
-                      </p>
+                      <>
+                        <p className="text-xs text-red-300/70 mt-1 px-4 text-center truncate max-w-full">
+                          {task.errorMessage}
+                        </p>
+                        <p className="text-[10px] text-red-300/50 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          Click to view details
+                        </p>
+                      </>
                     )}
                   </div>
                   {/* 移除按钮 */}
                   {onRemoveTask && (
                     <button
-                      onClick={() => onRemoveTask(task.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemoveTask(task.id);
+                      }}
                       className="absolute top-2 right-2 p-1.5 bg-card/70 border border-border/70 backdrop-blur-sm rounded-md hover:bg-card/90 transition-colors"
                     >
                       <X className="w-3 h-3 text-foreground" />
@@ -218,7 +242,7 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
               ))}
 
               {/* 已完成的生成结果 */}
-              {visibleGenerations.map((gen) => (
+              {visibleGenerations.map((gen, index) => (
                 <div
                   key={gen.id}
                   className="group relative aspect-video bg-card/60 rounded-xl overflow-hidden cursor-pointer border border-border/70 hover:border-border transition-all"
@@ -239,23 +263,43 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
                         }}
                       />
                       <div className="absolute top-2 left-2 px-2 py-1 bg-card/70 border border-border/70 backdrop-blur-sm rounded-md flex items-center gap-1">
+                        <span className="text-[10px] font-medium text-foreground">#{index + 1}</span>
                         <Play className="w-3 h-3 text-foreground" />
-                        <span className="text-[10px] text-foreground">VIDEO</span>
                       </div>
                     </>
                   ) : (
-                    <img
-                      src={gen.resultUrl}
-                      alt={gen.prompt}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                      decoding="async"
-                    />
+                    <>
+                      <img
+                        src={gen.resultUrl}
+                        alt={gen.prompt}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                      <div className="absolute top-2 left-2 px-2 py-1 bg-card/70 border border-border/70 backdrop-blur-sm rounded-md">
+                        <span className="text-[10px] font-medium text-foreground">#{index + 1}</span>
+                      </div>
+                    </>
                   )}
-                  <div className="absolute inset-0 bg-background/70 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">
-                    <div className="w-12 h-12 bg-card/70 border border-border/70 backdrop-blur-sm rounded-full flex items-center justify-center">
-                      <Maximize2 className="w-5 h-5 text-foreground" />
+                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
+                    <div className="w-14 h-14 bg-background/50 backdrop-blur-sm rounded-full flex items-center justify-center">
+                      <Maximize2 className="w-6 h-6 text-foreground" />
                     </div>
+                  </div>
+                  <div
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadFile(gen.resultUrl, gen.id, gen.type);
+                      }}
+                      className="w-8 h-8 bg-card/70 border border-border/70 backdrop-blur-sm rounded-lg flex items-center justify-center text-foreground hover:bg-card/90 transition-colors"
+                      title="Download"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                   <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-background/80 via-background/30 to-transparent">
                     <p className="text-xs text-foreground/80 truncate">{gen.prompt || '无提示词'}</p>
@@ -398,6 +442,70 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask }: ResultG
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {selectedFailedTask && (
+        <div
+          className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setSelectedFailedTask(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="error-modal-title"
+        >
+          <div
+            className="bg-card/95 border border-red-500/30 rounded-2xl p-6 w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-500/20 rounded-xl flex items-center justify-center">
+                <AlertCircle className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h2 id="error-modal-title" className="text-lg font-medium text-foreground">
+                  {selectedFailedTask.status === 'cancelled' ? 'Task cancelled' : 'Generation failed'}
+                </h2>
+                <p className="text-xs text-foreground/40">
+                  {formatDate(selectedFailedTask.createdAt)}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-foreground/50 mb-1">Error</p>
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                  <p className="text-sm text-red-300 whitespace-pre-wrap break-words">
+                    {selectedFailedTask.errorMessage}
+                  </p>
+                </div>
+              </div>
+
+              {selectedFailedTask.prompt && (
+                <div>
+                  <p className="text-xs text-foreground/50 mb-1">Prompt</p>
+                  <p className="text-sm text-foreground/70 break-words">
+                    {selectedFailedTask.prompt}
+                  </p>
+                </div>
+              )}
+
+              {selectedFailedTask.model && (
+                <div>
+                  <p className="text-xs text-foreground/50 mb-1">Model</p>
+                  <p className="text-sm text-foreground/70">{selectedFailedTask.model}</p>
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={() => setSelectedFailedTask(null)}
+              className="mt-6 w-full py-2.5 bg-card/60 border border-border/70 text-foreground rounded-xl hover:bg-card/80 transition-colors text-sm font-medium"
+              autoFocus
+            >
+              Close
+            </button>
           </div>
         </div>
       )}

@@ -82,6 +82,7 @@ export default function ImageChannelsPage() {
   const [selectedRemoteModels, setSelectedRemoteModels] = useState<Set<string>>(new Set());
   const [selectedGroupedModels, setSelectedGroupedModels] = useState<Set<string>>(new Set());
   const [addingRemoteModels, setAddingRemoteModels] = useState(false);
+  const [groupedModelOverrides, setGroupedModelOverrides] = useState<Record<string, { displayName: string; description: string }>>({});
 
   const [modelForm, setModelForm] = useState({
     name: '',
@@ -494,6 +495,7 @@ export default function ImageChannelsPage() {
     setGroupedModels([]);
     setSelectedRemoteModels(new Set());
     setSelectedGroupedModels(new Set());
+    setGroupedModelOverrides({});
     try {
       const res = await fetch(`/api/admin/image-channels/models?channelId=${channelId}&group=true`);
       const data = await res.json();
@@ -516,6 +518,7 @@ export default function ImageChannelsPage() {
     setGroupedModels([]);
     setSelectedRemoteModels(new Set());
     setSelectedGroupedModels(new Set());
+    setGroupedModelOverrides({});
   };
 
   const toggleRemoteModelSelection = (modelId: string) => {
@@ -563,15 +566,18 @@ export default function ImageChannelsPage() {
       for (const baseName of Array.from(selectedGroupedModels)) {
         const group = groupedModels.find(g => g.baseName === baseName);
         if (!group) continue;
+        const override = groupedModelOverrides[baseName];
+        const name = (override?.displayName || group.displayName).trim() || group.displayName;
+        const description = (override?.description || '').trim();
 
         const res = await fetch('/api/admin/image-models', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             channelId: remoteModelsChannelId,
-            name: group.displayName,
+            name,
             apiModel: group.apiModel,
-            description: '',
+            description,
             features: {
               textToImage: group.features.textToImage,
               imageToImage: group.features.imageToImage,
@@ -1207,40 +1213,85 @@ export default function ImageChannelsPage() {
                                 <span className="text-xs text-foreground/60 font-medium">Smart Grouped ({groupedModels.length})</span>
                                 <button onClick={selectAllGroupedModels} className="text-xs text-blue-400 hover:text-blue-300">Select all</button>
                               </div>
-                              <div className="max-h-40 overflow-y-auto space-y-1">
+                              <div className="max-h-40 overflow-y-auto space-y-2">
                                 {groupedModels.map(group => {
                                   const existingApiModels = new Set(channelModels.map(m => m.apiModel));
                                   const alreadyExists = existingApiModels.has(group.apiModel);
                                   const isSelected = selectedGroupedModels.has(group.baseName);
+                                  const override = groupedModelOverrides[group.baseName];
+                                  const displayName = override?.displayName ?? group.displayName;
+                                  const description = override?.description ?? '';
+                                  const displayLabel = displayName.trim() || group.displayName;
+
                                   return (
-                                    <div
-                                      key={group.baseName}
-                                      onClick={() => !alreadyExists && toggleGroupedModelSelection(group.baseName)}
-                                      className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors ${
-                                        alreadyExists
-                                          ? 'opacity-40 cursor-not-allowed bg-card/40'
-                                          : isSelected
-                                          ? 'bg-blue-500/20 border border-blue-500/40'
-                                          : 'hover:bg-card/70'
-                                      }`}
-                                    >
-                                      <div className={`w-4 h-4 rounded border flex items-center justify-center ${
-                                        alreadyExists
-                                          ? 'border-foreground/20 bg-foreground/10'
-                                          : isSelected
-                                          ? 'border-blue-500 bg-blue-500'
-                                          : 'border-foreground/30'
-                                      }`}>
-                                        {(isSelected || alreadyExists) && <Check className="w-3 h-3 text-white" />}
+                                    <div key={group.baseName} className="space-y-2">
+                                      <div
+                                        onClick={() => !alreadyExists && toggleGroupedModelSelection(group.baseName)}
+                                        className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors ${
+                                          alreadyExists
+                                            ? 'opacity-40 cursor-not-allowed bg-card/40'
+                                            : isSelected
+                                            ? 'bg-blue-500/20 border border-blue-500/40'
+                                            : 'hover:bg-card/70'
+                                        }`}
+                                      >
+                                        <div className={`w-4 h-4 rounded border flex items-center justify-center ${
+                                          alreadyExists
+                                            ? 'border-foreground/20 bg-foreground/10'
+                                            : isSelected
+                                            ? 'border-blue-500 bg-blue-500'
+                                            : 'border-foreground/30'
+                                        }`}>
+                                          {(isSelected || alreadyExists) && <Check className="w-3 h-3 text-white" />}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <span className="text-sm text-foreground truncate block">{displayLabel}</span>
+                                          <span className="text-xs text-foreground/40">
+                                            {group.aspectRatios.join(', ')}
+                                            {group.features.imageSize && ` · ${group.imageSizes.join('/')}`}
+                                          </span>
+                                        </div>
+                                        {alreadyExists && <span className="text-xs text-foreground/40">Added</span>}
                                       </div>
-                                      <div className="flex-1 min-w-0">
-                                        <span className="text-sm text-foreground truncate block">{group.displayName}</span>
-                                        <span className="text-xs text-foreground/40">
-                                          {group.aspectRatios.join(', ')}
-                                          {group.features.imageSize && ` · ${group.imageSizes.join('/')}`}
-                                        </span>
-                                      </div>
-                                      {alreadyExists && <span className="text-xs text-foreground/40">Added</span>}
+                                      {isSelected && !alreadyExists && (
+                                        <div
+                                          className="pl-6 pr-2 pb-1 space-y-2"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <input
+                                            type="text"
+                                            value={displayName}
+                                            onChange={(e) => {
+                                              const nextValue = e.target.value;
+                                              setGroupedModelOverrides(prev => ({
+                                                ...prev,
+                                                [group.baseName]: {
+                                                  displayName: nextValue,
+                                                  description: prev[group.baseName]?.description || '',
+                                                },
+                                              }));
+                                            }}
+                                            placeholder="显示名称"
+                                            className="w-full px-3 py-2 bg-card/60 border border-border/70 rounded-lg text-foreground placeholder:text-foreground/30 text-sm focus:outline-none focus:border-border"
+                                          />
+                                          <input
+                                            type="text"
+                                            value={description}
+                                            onChange={(e) => {
+                                              const nextValue = e.target.value;
+                                              setGroupedModelOverrides(prev => ({
+                                                ...prev,
+                                                [group.baseName]: {
+                                                  displayName: prev[group.baseName]?.displayName ?? group.displayName,
+                                                  description: nextValue,
+                                                },
+                                              }));
+                                            }}
+                                            placeholder="模型介绍"
+                                            className="w-full px-3 py-2 bg-card/60 border border-border/70 rounded-lg text-foreground placeholder:text-foreground/30 text-sm focus:outline-none focus:border-border"
+                                          />
+                                        </div>
+                                      )}
                                     </div>
                                   );
                                 })}

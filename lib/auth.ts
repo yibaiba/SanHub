@@ -74,21 +74,25 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         session.user.id = token.id as string;
         session.user.role = token.role as 'user' | 'admin' | 'moderator';
+        session.user.balance = token.balance as number;
         
         // 每次都从数据库获取最新余额，避免缓存导致积分不一致
         try {
           const freshUser = await getUserById(token.id as string);
           if (freshUser) {
+            // 用户被禁用时，返回 null session 强制登出
+            if (freshUser.disabled) {
+              return null as unknown as typeof session;
+            }
             session.user.balance = freshUser.balance;
             session.user.role = freshUser.role;
             session.user.name = freshUser.name;
             session.user.disabled = freshUser.disabled;
-          } else {
-            session.user.balance = token.balance as number;
           }
-        } catch {
-          // 数据库查询失败时使用 token 中的缓存值
-          session.user.balance = token.balance as number;
+          // 用户不存在时保持 token 中的缓存值（已在上面设置）
+        } catch (error) {
+          // 数据库查询失败时使用 token 中的缓存值（已在上面设置）
+          console.error('[Auth] Failed to fetch user in session callback:', error);
         }
       }
       return session;
