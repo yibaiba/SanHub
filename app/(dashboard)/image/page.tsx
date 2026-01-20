@@ -82,7 +82,7 @@ export default function ImageGenerationPage() {
   const [aspectRatio, setAspectRatio] = useState<string>('1:1');
   const [imageSize, setImageSize] = useState<string>('1K');
   const [prompt, setPrompt] = useState('');
-  const [images, setImages] = useState<{ file: File; preview: string }[]>([]);
+  const [images, setImages] = useState<Array<{ file: File; preview: string } | { data: string; mimeType: string; preview: string }>>([]);
 
   // 任务状态
   const [generations, setGenerations] = useState<Generation[]>([]);
@@ -555,7 +555,16 @@ export default function ImageGenerationPage() {
       const compressedImages = [];
 
       for (const img of images) {
-        // 检查缓存
+        // 如果已经是 base64 格式（从恢复参数来的）
+        if ('data' in img && 'mimeType' in img) {
+          compressedImages.push({
+            mimeType: img.mimeType,
+            data: img.data,
+          });
+          continue;
+        }
+
+        // 处理 File 对象
         let base64 = compressedCache.get(img.file);
 
         if (!base64) {
@@ -612,7 +621,7 @@ export default function ImageGenerationPage() {
       type: data.data.type || 'image',
       status: 'pending',
       createdAt: Date.now(),
-      referenceImages: taskImages.map(img => `data:${img.mimeType};base64,${img.data}`),
+      referenceImages: compressedImages?.map(img => `data:${img.mimeType};base64,${img.data}`) || [],
     };
     setTasks((prev) => [newTask, ...prev]);
     pollTaskStatus(data.data.id, taskPrompt);
