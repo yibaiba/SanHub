@@ -693,11 +693,11 @@ export async function updateUserBalance(
 
   const now = Date.now();
   if (mode === 'clamp') {
-    const [result] = await db.execute(
+    const [rows, resultInfo] = await db.execute(
       'UPDATE users SET balance = CASE WHEN balance + ? < 0 THEN 0 ELSE balance + ? END, updated_at = ? WHERE id = ?',
       [safeDelta, safeDelta, now, id]
     );
-    if (!(result as any).affectedRows) {
+    if (!(resultInfo as any).affectedRows) {
       throw new Error('User not found');
     }
     const user = await getUserById(id);
@@ -714,17 +714,18 @@ export async function updateUserBalance(
     expectedAfter: (userBefore?.balance || 0) + safeDelta,
   });
 
-  const [result] = await db.execute(
+  const [rows, resultInfo] = await db.execute(
     'UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ? AND balance + ? >= 0',
     [safeDelta, now, id, safeDelta]
   );
 
+  const info = resultInfo as any;
   console.log('[updateUserBalance] Update result:', {
-    affectedRows: (result as any).affectedRows,
-    changedRows: (result as any).changedRows,
+    affectedRows: info.affectedRows,
+    changedRows: info.changedRows,
   });
 
-  if (!(result as any).affectedRows) {
+  if (!info.affectedRows) {
     const user = await getUserById(id);
     console.log('[updateUserBalance] Update failed, current balance:', {
       userId: id,
