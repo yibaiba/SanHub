@@ -328,6 +328,13 @@ export async function initializeDatabase(): Promise<void> {
     // 字段已存在，忽略错误
   }
 
+  // 确保现有记录有 Veo 定价值（修复旧数据）
+  try {
+    await db.execute('UPDATE system_config SET pricing_veo_video_8s = 100 WHERE pricing_veo_video_8s IS NULL OR pricing_veo_video_8s = 0');
+  } catch {
+    // 忽略错误
+  }
+
   // 添加 SORA 后台配置字段
   try {
     await db.execute("ALTER TABLE system_config ADD COLUMN sora_backend_url VARCHAR(500) DEFAULT ''");
