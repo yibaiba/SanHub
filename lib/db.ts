@@ -705,19 +705,42 @@ export async function updateUserBalance(
     return user.balance;
   }
 
+  // Get current balance before update for logging
+  const userBefore = await getUserById(id);
+  console.log('[updateUserBalance] Before update:', {
+    userId: id,
+    currentBalance: userBefore?.balance,
+    delta: safeDelta,
+    expectedAfter: (userBefore?.balance || 0) + safeDelta,
+  });
+
   const [result] = await db.execute(
     'UPDATE users SET balance = balance + ?, updated_at = ? WHERE id = ? AND balance + ? >= 0',
     [safeDelta, now, id, safeDelta]
   );
 
+  console.log('[updateUserBalance] Update result:', {
+    affectedRows: (result as any).affectedRows,
+    changedRows: (result as any).changedRows,
+  });
+
   if (!(result as any).affectedRows) {
     const user = await getUserById(id);
+    console.log('[updateUserBalance] Update failed, current balance:', {
+      userId: id,
+      currentBalance: user?.balance,
+      attemptedDelta: safeDelta,
+    });
     if (!user) throw new Error('User not found');
     throw new Error('Insufficient balance');
   }
 
   const user = await getUserById(id);
   if (!user) throw new Error('User not found');
+  console.log('[updateUserBalance] After update:', {
+    userId: id,
+    newBalance: user.balance,
+  });
   return user.balance;
 }
 
