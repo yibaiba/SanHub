@@ -118,6 +118,11 @@ export default function PricingPage() {
             value={config.pricing.soraVideo25s}
             onChange={(v) => updatePricing('soraVideo25s', v)}
           />
+          <PricingInput
+            label="Veo 8秒视频"
+            value={config.pricing.veoVideo8s}
+            onChange={(v) => updatePricing('veoVideo8s', v)}
+          />
         </div>
       </div>
 

@@ -321,6 +321,13 @@ export async function initializeDatabase(): Promise<void> {
     // 字段已存在，忽略错误
   }
 
+  // 添加 Veo 视频定价字段
+  try {
+    await db.execute('ALTER TABLE system_config ADD COLUMN pricing_veo_video_8s INT DEFAULT 100');
+  } catch {
+    // 字段已存在，忽略错误
+  }
+
   // 添加 SORA 后台配置字段
   try {
     await db.execute("ALTER TABLE system_config ADD COLUMN sora_backend_url VARCHAR(500) DEFAULT ''");
@@ -1249,6 +1256,7 @@ export async function getSystemConfig(): Promise<SystemConfig> {
         soraVideo10s: row.pricing_sora_video_10s || 100,
         soraVideo15s: row.pricing_sora_video_15s || 150,
         soraVideo25s: row.pricing_sora_video_25s || 200,
+        veoVideo8s: row.pricing_veo_video_8s || 100,
         soraImage: row.pricing_sora_image || 50,
         geminiNano: row.pricing_gemini_nano || 10,
         geminiPro: row.pricing_gemini_pro || 30,
@@ -1373,6 +1381,10 @@ export async function updateSystemConfig(
     if (p.soraVideo25s !== undefined) {
       fields.push('pricing_sora_video_25s = ?');
       values.push(p.soraVideo25s);
+    }
+    if (p.veoVideo8s !== undefined) {
+      fields.push('pricing_veo_video_8s = ?');
+      values.push(p.veoVideo8s);
     }
     if (p.soraImage !== undefined) {
       fields.push('pricing_sora_image = ?');

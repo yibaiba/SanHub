@@ -372,6 +372,7 @@ export interface PricingConfig {
   soraVideo10s: number;
   soraVideo15s: number;
   soraVideo25s: number;
+  veoVideo8s: number;
   soraImage: number;
   geminiNano: number;
   geminiPro: number;
