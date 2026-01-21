@@ -1201,6 +1201,7 @@ export async function getSystemConfig(): Promise<SystemConfig> {
           soraVideo10s: 100,
           soraVideo15s: 150,
           soraVideo25s: 200,
+          veoVideo8s: 100,
           soraImage: 50,
           geminiNano: 10,
           geminiPro: 30,
