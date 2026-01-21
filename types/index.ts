@@ -98,6 +98,7 @@ export interface Generation {
 
 // 生成参数
 export interface GenerationParams {
+  modelId?: string;
   model?: string;
   aspectRatio?: string;
   duration?: string;
