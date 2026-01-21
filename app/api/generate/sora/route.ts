@@ -301,10 +301,20 @@ export async function POST(request: NextRequest) {
 
       const aspectRatio = body.aspectRatio || model.defaultAspectRatio;
       const duration = body.duration || model.defaultDuration;
-      const durationCost = model.durations.find((d) => d.value === duration)?.cost;
-      const estimatedCost = typeof durationCost === 'number'
-        ? durationCost
-        : model.durations[0]?.cost || 0;
+      
+      // Calculate cost based on channel type
+      let estimatedCost = 0;
+      if (channel.type === 'flow') {
+        // Flow (Veo) models: use database pricing for 8s videos
+        const config = await getSystemConfig();
+        estimatedCost = config.pricing.veoVideo8s;
+      } else {
+        // Sora models: use duration-based pricing from model config
+        const durationCost = model.durations.find((d) => d.value === duration)?.cost;
+        estimatedCost = typeof durationCost === 'number'
+          ? durationCost
+          : model.durations[0]?.cost || 0;
+      }
 
       const user = await getUserById(session.user.id);
       if (!user) {
