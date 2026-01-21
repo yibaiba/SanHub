@@ -861,8 +861,7 @@ export async function generateImage(request: ImageGenerateRequest): Promise<Gene
         effectiveBaseUrl,
         effectiveApiKey,
         model.apiModel,
-        channel.id,
-        model.resolutions
+        channel.id
       );
       break;
 
