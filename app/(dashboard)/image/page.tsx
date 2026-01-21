@@ -384,19 +384,15 @@ export default function ImageGenerationPage() {
 
     const loadHistory = async () => {
       try {
-        const res = await fetch('/api/user/history?limit=20&page=1');
+        const res = await fetch('/api/user/history?limit=50&page=1');
         if (res.ok) {
           const data = await res.json();
           const imageGenerations = (data.data || []).filter(
             (g: Generation) =>
-              g.type?.includes('sora-image') ||
-              g.type?.includes('flow-image') ||
-              g.type?.includes('gemini') ||
-              g.type?.includes('zimage') ||
-              g.type?.includes('gitee')
+              g.type?.includes('image')
           );
           setGenerations(imageGenerations);
-          setHasMoreHistory(imageGenerations.length === 20);
+          setHasMoreHistory(imageGenerations.length === 50);
           setCurrentPage(1);
         }
       } catch (err) {
@@ -435,19 +431,15 @@ export default function ImageGenerationPage() {
     setLoadingHistory(true);
     try {
       const nextPage = currentPage + 1;
-      const res = await fetch(`/api/user/history?limit=20&page=${nextPage}`);
+      const res = await fetch(`/api/user/history?limit=50&page=${nextPage}`);
       if (res.ok) {
         const data = await res.json();
         const imageGenerations = (data.data || []).filter(
           (g: Generation) =>
-            g.type?.includes('sora-image') ||
-            g.type?.includes('flow-image') ||
-            g.type?.includes('gemini') ||
-            g.type?.includes('zimage') ||
-            g.type?.includes('gitee')
+            g.type?.includes('image')
         );
         setGenerations(prev => [...prev, ...imageGenerations]);
-        setHasMoreHistory(imageGenerations.length === 20);
+        setHasMoreHistory(imageGenerations.length === 50);
         setCurrentPage(nextPage);
       }
     } catch (err) {
@@ -715,12 +707,12 @@ export default function ImageGenerationPage() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-100px)] max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 shrink-0">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-3xl font-light text-foreground">图像生成</h1>
-          <p className="text-foreground/50 mt-1 text-sm font-light">
+          <p className="text-foreground/50 mt-1 font-light">
             选择模型，生成高质量图像
           </p>
         </div>
@@ -738,193 +730,262 @@ export default function ImageGenerationPage() {
 
       {/* Warnings */}
       {modelsLoaded && availableModels.length === 0 && (
-        <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center gap-3 mb-4 shrink-0">
+        <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center gap-3">
           <AlertCircle className="w-5 h-5 text-yellow-400 flex-shrink-0" />
           <p className="text-sm text-yellow-200">所有图像生成渠道已被管理员禁用</p>
         </div>
       )}
 
       {isImageLimitReached && (
-        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-3 mb-4 shrink-0">
+        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-3">
           <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
           <p className="text-sm text-red-300">今日图像生成次数已达上限，请明天再试</p>
         </div>
       )}
 
-      {/* Results Area */}
-      <div className="flex-1 overflow-auto min-h-0 mb-4">
-        <ResultGallery
-          generations={generations}
-          tasks={tasks}
-          onRemoveTask={handleRemoveTask}
-          onRestoreParams={handleRestoreParams}
-          onRestoreTaskParams={handleRestoreTaskParams}
-          onLoadMore={handleLoadMoreHistory}
-          hasMore={hasMoreHistory}
-          loading={loadingHistory}
-          onDeleteGeneration={handleDeleteGeneration}
-        />
-      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Left Panel - Input */}
+        <div className="lg:col-span-1">
+          <div className={cn(
+            "surface overflow-hidden backdrop-blur-sm",
+            (availableModels.length === 0 || isImageLimitReached) && "opacity-50 pointer-events-none"
+          )}>
+            <div className="px-5 py-4 border-b border-border/70 bg-gradient-to-r from-sky-500/10 to-emerald-500/10">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-card/60 border border-border/70 rounded-lg flex items-center justify-center">
+                  <Sparkles className="w-4 h-4 text-sky-300" />
+                </div>
+                <div>
+                  <h2 className="text-base font-medium text-foreground">创作面板</h2>
+                  <p className="text-xs text-foreground/40">配置参数开始生成</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-5 space-y-5">
+              {/* Model Selection */}
+              <div className="space-y-2">
+                <label className="text-xs text-foreground/50 uppercase tracking-wider">模型</label>
+                <select
+                  value={selectedModelId}
+                  onChange={(e) => setSelectedModelId(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-card/60 border border-border/70 text-foreground rounded-lg focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 text-sm"
+                >
+                  {availableModels.map((model) => (
+                    <option key={model.id} value={model.id}>{model.name}</option>
+                  ))}
+                </select>
+              </div>
 
-      {/* Input Panel - Fixed at bottom */}
-      <div className={cn(
-        "surface shrink-0",
-        (availableModels.length === 0 || isImageLimitReached) && "opacity-50 pointer-events-none"
-      )}>
-        <div className="p-4">
-          {/* Input row */}
-          <div className="flex gap-3 mb-3">
-            {currentModel?.features.imageToImage && (
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className={cn(
-                  'w-16 h-16 shrink-0 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer transition-all',
-                  images.length > 0 ? 'border-border/70 bg-card/60' : 'border-border/70 hover:border-border hover:bg-card/60'
-                )}
-              >
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  className="hidden"
-                  multiple
-                  accept="image/*"
-                  onChange={handleFileUpload}
-                />
-                {images.length > 0 ? (
-                  <div className="relative w-full h-full">
-                    <img src={images[0].preview} alt="" className="w-full h-full object-cover rounded-md" />
-                    {images.length > 1 && (
-                      <div className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/70 rounded text-[10px] text-white">
-                        +{images.length - 1}
-                      </div>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        clearImages();
-                      }}
-                      className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600"
-                    >
-                      <X className="w-2.5 h-2.5 text-white" />
-                    </button>
+              {/* Image Size (if supported) */}
+              {currentModel?.features.imageSize && currentModel.imageSizes && (
+                <div className="space-y-2">
+                  <label className="text-xs text-foreground/50 uppercase tracking-wider">分辨率</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {currentModel.imageSizes.map((size) => (
+                      <button
+                        key={size}
+                        onClick={() => setImageSize(size)}
+                        className={cn(
+                          'px-3 py-2 rounded-lg border text-sm font-medium transition-all',
+                          imageSize === size
+                            ? 'bg-foreground text-background border-transparent'
+                            : 'bg-card/60 text-foreground/70 border-border/70 hover:bg-card/80 hover:text-foreground'
+                        )}
+                      >
+                        {size}
+                      </button>
+                    ))}
                   </div>
-                ) : (
-                  <>
-                    <Upload className="w-4 h-4 text-foreground/40 mb-0.5" />
-                    <span className="text-[9px] text-foreground/40">参考图</span>
-                  </>
-                )}
-              </button>
-            )}
-
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="描述你想要生成的图像..."
-              className="flex-1 h-16 px-3 py-2 bg-input/70 border border-border/70 text-foreground rounded-lg resize-none text-sm focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30"
-            />
-          </div>
-
-          {/* Controls row */}
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <select
-                value={selectedModelId}
-                onChange={(e) => setSelectedModelId(e.target.value)}
-                className="appearance-none px-3 py-1.5 pr-8 bg-card/60 border border-border/70 rounded-lg text-xs text-foreground cursor-pointer hover:bg-card/80 focus:outline-none focus:ring-2 focus:ring-ring/30"
-              >
-                {availableModels.map((model) => (
-                  <option key={model.id} value={model.id}>{model.name}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-foreground/50 pointer-events-none" />
-            </div>
-
-            {currentModel?.features.imageSize && currentModel.imageSizes && (
-              <div className="relative">
-                <select
-                  value={imageSize}
-                  onChange={(e) => setImageSize(e.target.value)}
-                  className="appearance-none px-3 py-1.5 pr-8 bg-card/60 border border-border/70 rounded-lg text-xs text-foreground cursor-pointer hover:bg-card/80 focus:outline-none focus:ring-2 focus:ring-ring/30"
-                >
-                  {currentModel.imageSizes.map((size) => (
-                    <option key={size} value={size}>{size}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-foreground/50 pointer-events-none" />
-              </div>
-            )}
-
-            {currentModel && (
-              <div className="relative">
-                <select
-                  value={aspectRatio}
-                  onChange={(e) => setAspectRatio(e.target.value)}
-                  className="appearance-none px-3 py-1.5 pr-8 bg-card/60 border border-border/70 rounded-lg text-xs text-foreground cursor-pointer hover:bg-card/80 focus:outline-none focus:ring-2 focus:ring-ring/30"
-                >
-                  {currentModel.aspectRatios.map((r) => (
-                    <option key={r} value={r}>{r}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-foreground/50 pointer-events-none" />
-              </div>
-            )}
-
-            {currentModel && (
-              <span className="text-xs text-foreground/40">{getCurrentResolutionDisplay()}</span>
-            )}
-
-            {error && (
-              <div className="flex items-center gap-1.5 text-xs text-red-400">
-                <AlertCircle className="w-3 h-3" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <div className="flex-1" />
-
-            <div className="relative group">
-              <button
-                onClick={handleGachaMode}
-                disabled={submitting || compressing}
-                className={cn(
-                  'w-8 h-8 flex items-center justify-center rounded-lg transition-all',
-                  submitting || compressing
-                    ? 'bg-card/60 text-foreground/40 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:opacity-90'
-                )}
-              >
-                {compressing || submitting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Dices className="w-4 h-4" />
-                )}
-              </button>
-            </div>
-
-            <button
-              onClick={handleGenerate}
-              disabled={submitting || compressing}
-              className={cn(
-                'flex items-center gap-2 px-4 py-1.5 rounded-lg font-medium text-sm transition-all',
-                submitting || compressing
-                  ? 'bg-card/60 text-foreground/40 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-sky-500 to-emerald-500 text-white hover:opacity-90'
+                </div>
               )}
-            >
-              {submitting || compressing ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>{compressing ? '处理中' : '提交中'}</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  <span>立即生成</span>
-                </>
+
+              {/* Aspect Ratio */}
+              {currentModel && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-foreground/50 uppercase tracking-wider">画面比例</label>
+                    <span className="text-xs text-foreground/40">{getCurrentResolutionDisplay()}</span>
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+                    {currentModel.aspectRatios.map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => setAspectRatio(r)}
+                        className={cn(
+                          'px-2 py-2 rounded-lg border text-xs font-medium transition-all',
+                          aspectRatio === r
+                            ? 'bg-foreground text-background border-transparent'
+                            : 'bg-card/60 text-foreground/70 border-border/70 hover:bg-card/80 hover:text-foreground'
+                        )}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
-            </button>
+
+              {/* Reference Images (if supported) */}
+              {currentModel?.features.imageToImage && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-foreground/50 uppercase tracking-wider">参考图</label>
+                    {images.length > 0 && (
+                      <button
+                        onClick={clearImages}
+                        className="text-xs text-red-300 hover:text-red-200 flex items-center gap-1"
+                      >
+                        <X className="w-3 h-3" /> 清除
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    multiple
+                    accept="image/*"
+                    onChange={handleFileUpload}
+                  />
+                  {images.length === 0 ? (
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="border border-dashed border-border/70 rounded-lg p-5 text-center cursor-pointer hover:bg-card/70 hover:border-border transition-all"
+                    >
+                      <Upload className="w-6 h-6 mx-auto text-foreground/40 mb-2" />
+                      <p className="text-sm text-foreground/60">点击上传参考图</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-4 gap-2">
+                      {images.map((img, i) => (
+                        <div
+                          key={i}
+                          className="aspect-square rounded-lg overflow-hidden border border-border/70"
+                        >
+                          <img
+                            src={img.preview}
+                            className="w-full h-full object-cover"
+                            alt=""
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Prompt */}
+              <div className="space-y-2">
+                <label className="text-xs text-foreground/50 uppercase tracking-wider">提示词</label>
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="描述你想要生成的图像..."
+                  className="w-full h-20 px-3 py-2.5 bg-input/70 border border-border/70 text-foreground rounded-lg resize-none focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 placeholder:text-muted-foreground/60 text-sm"
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-4">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={keepPrompt}
+                    onChange={(e) => setKeepPrompt(e.target.checked)}
+                    className="w-4 h-4 rounded border-border/70 bg-card/60 text-foreground accent-sky-400 cursor-pointer"
+                  />
+                  <span className="text-sm text-foreground/50">保留提示词</span>
+                </label>
+                {currentModel?.features.imageToImage && (
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={keepImages}
+                      onChange={(e) => setKeepImages(e.target.checked)}
+                      className="w-4 h-4 rounded border-border/70 bg-card/60 text-foreground accent-sky-400 cursor-pointer"
+                    />
+                    <span className="text-sm text-foreground/50">保留参考图</span>
+                  </label>
+                )}
+              </div>
+
+              {/* Error */}
+              {error && (
+                <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-300 shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-300">{error}</p>
+                </div>
+              )}
+
+              {/* Generate Buttons */}
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  onClick={handleGenerate}
+                  disabled={submitting || compressing}
+                  className={cn(
+                    'w-full sm:flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-medium transition-all',
+                    submitting || compressing
+                      ? 'bg-card/60 text-foreground/40 cursor-not-allowed'
+                      : 'bg-foreground text-background hover:opacity-90'
+                  )}
+                >
+                  {submitting || compressing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>{compressing ? '处理中...' : '提交中...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>开始生成</span>
+                    </>
+                  )}
+                </button>
+                <div className="relative group">
+                  <button
+                    onClick={handleGachaMode}
+                    disabled={submitting || compressing}
+                    className={cn(
+                      'h-[46px] w-full sm:w-[46px] flex items-center justify-center rounded-lg font-medium transition-all',
+                      submitting || compressing
+                        ? 'bg-card/60 text-foreground/40 cursor-not-allowed'
+                        : 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:opacity-90'
+                    )}
+                    title="抽卡模式"
+                  >
+                    <Dices className="w-4 h-4" />
+                  </button>
+                  <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-20">
+                    <div className="bg-card/90 border border-border/70 rounded-lg px-3 py-2 text-xs text-foreground/80 whitespace-nowrap shadow-lg">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <Info className="w-3 h-3 text-amber-300" />
+                        <span className="font-medium text-foreground">抽卡模式</span>
+                      </div>
+                      <p>一次性提交 3 个相同参数的任务</p>
+                      <p>提高出好图的概率</p>
+                      <div className="absolute bottom-0 right-4 translate-y-full">
+                        <div className="border-8 border-transparent border-t-card/90"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
+        </div>
+
+        {/* Right Panel - Results */}
+        <div className="lg:col-span-2">
+          <ResultGallery
+            generations={generations}
+            tasks={tasks}
+            onRemoveTask={handleRemoveTask}
+            onRestoreParams={handleRestoreParams}
+            onRestoreTaskParams={handleRestoreTaskParams}
+            onLoadMore={handleLoadMoreHistory}
+            hasMore={hasMoreHistory}
+            loading={loadingHistory}
+            onDeleteGeneration={handleDeleteGeneration}
+          />
         </div>
       </div>
     </div>

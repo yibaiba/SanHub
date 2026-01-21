@@ -22,6 +22,7 @@ const BLOCKED_SUFFIXES = ['.localhost', '.local', '.internal'];
 const TRUSTED_DOMAINS = [
   'storage.googleapis.com',
   'storage.cloud.google.com',
+  'flow.yibaiba.online',
 ];
 
 function isTrustedDomain(hostname: string): boolean {

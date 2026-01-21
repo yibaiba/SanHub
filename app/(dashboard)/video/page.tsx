@@ -16,6 +16,8 @@ import {
   Dices,
   Info,
   User,
+  Maximize2,
+  X,
 } from 'lucide-react';
 import { cn, fileToBase64 } from '@/lib/utils';
 import { toast } from '@/components/ui/toaster';
@@ -82,6 +84,7 @@ export default function VideoGenerationPage() {
   const [showImagePicker, setShowImagePicker] = useState(false);
   const [imageLibrary, setImageLibrary] = useState<Generation[]>([]);
   const [loadingLibrary, setLoadingLibrary] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // 加载图片库
   const loadImageLibrary = async () => {
@@ -510,12 +513,22 @@ export default function VideoGenerationPage() {
           const isCompletedStatus = status === 'completed' || status === 'succeeded';
 
           if (isCompletedStatus && resultUrl) {
+            // Get reference images from task before removing it
+            let referenceImages: string[] | undefined;
+            setTasks((prev) => {
+              const task = prev.find(t => t.id === taskId);
+              if (task?.referenceImages) {
+                referenceImages = task.referenceImages;
+              }
+              return prev;
+            });
+
             const generation: Generation = {
               id: data.data.id,
               userId: '',
               type: data.data.type,
               prompt: taskPrompt,
-              params: {},
+              params: referenceImages ? { referenceImages } : {},
               resultUrl,
               cost: data.data.cost,
               status: 'completed',
@@ -2059,9 +2072,7 @@ export default function VideoGenerationPage() {
                 onClick={() => setShowImagePicker(false)}
                 className="p-2 hover:bg-muted rounded-lg transition-colors"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                <X className="w-5 h-5" />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
@@ -2076,32 +2087,83 @@ export default function VideoGenerationPage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
-                  {imageLibrary.map((gen) => (
-                    <button
-                      key={gen.id}
-                      onClick={() => {
-                        handleSelectFromLibrary(gen);
-                        setShowImagePicker(false);
-                      }}
-                      className="aspect-square rounded-lg overflow-hidden border-2 border-border/50 hover:border-sky-400 transition-all group relative"
-                    >
-                      <img
-                        src={`/api/media/${gen.id}`}
-                        alt={gen.prompt || ''}
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-sky-500 rounded-full p-2">
-                          <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
+                  {imageLibrary.map((gen) => {
+                    // Determine orientation from aspectRatio in params
+                    const aspectRatio = gen.params?.aspectRatio as string | undefined;
+                    const isLandscape = aspectRatio?.includes('16:9') || aspectRatio?.includes('landscape');
+                    const isPortrait = aspectRatio?.includes('9:16') || aspectRatio?.includes('portrait');
+                    
+                    return (
+                      <div
+                        key={gen.id}
+                        className="aspect-square rounded-lg overflow-hidden border-2 border-border/50 hover:border-sky-400 transition-all group relative cursor-pointer"
+                        onClick={() => {
+                          handleSelectFromLibrary(gen);
+                          setShowImagePicker(false);
+                        }}
+                      >
+                        <img
+                          src={`/api/media/${gen.id}`}
+                          alt={gen.prompt || ''}
+                          className="w-full h-full object-cover"
+                        />
+                        
+                        {/* Orientation Badge */}
+                        <div className="absolute top-2 left-2 px-2 py-1 bg-black/70 backdrop-blur-sm rounded text-[10px] text-white font-medium pointer-events-none">
+                          {isLandscape ? '横屏' : isPortrait ? '竖屏' : '方形'}
+                        </div>
+                        
+                        {/* Action Buttons */}
+                        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPreviewImage(`/api/media/${gen.id}`);
+                            }}
+                            className="p-1.5 bg-black/70 backdrop-blur-sm rounded hover:bg-black/90 transition-colors"
+                            title="查看大图"
+                          >
+                            <Maximize2 className="w-3 h-3 text-white" />
+                          </button>
+                        </div>
+                        
+                        {/* Select Overlay */}
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center pointer-events-none">
+                          <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-sky-500 rounded-full p-2">
+                            <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                          </div>
                         </div>
                       </div>
-                    </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Preview Modal */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-7xl max-h-[90vh]">
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute -top-12 right-0 p-2 text-white/80 hover:text-white transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <img
+              src={previewImage}
+              alt="Preview"
+              className="max-w-full max-h-[90vh] object-contain rounded-lg"
+              onClick={(e) => e.stopPropagation()}
+            />
           </div>
         </div>
       )}

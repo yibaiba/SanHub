@@ -177,7 +177,10 @@ sanhub/
 ├── app/
 │   ├── (auth)/              # 登录/注册页面
 │   ├── (dashboard)/         # 用户面板
-│   │   ├── video/           # 视频生成
+│   │   ├── video/           # 视频生成（已重构为模块化架构）
+│   │   │   ├── components/  # 视频页面组件
+│   │   │   ├── utils/       # 辅助函数
+│   │   │   └── page.tsx     # 主页面（~350行，原2112行）
 │   │   ├── image/           # 图像生成
 │   │   ├── workspace/       # 工作空间
 │   │   ├── gallery/         # 作品广场
@@ -197,11 +200,18 @@ sanhub/
 │   ├── ui/                  # 基础 UI 组件
 │   ├── generator/           # 生成器组件
 │   ├── workspace/           # 工作空间组件
+│   ├── video/               # 视频相关组件
 │   └── layout/              # 布局组件
 ├── data/
 │   ├── media/               # 媒体文件存储
 │   └── prompts/             # 提示词模板
 ├── lib/
+│   ├── hooks/               # 自定义 React Hooks
+│   │   ├── useVideoGeneration.ts  # 视频生成状态管理
+│   │   ├── useTaskPolling.ts      # 任务轮询
+│   │   ├── useImageUpload.ts      # 图片上传
+│   │   └── usePromptEnhance.ts    # 提示词增强
+│   ├── validation/          # 输入验证
 │   ├── db.ts                # 数据库操作
 │   ├── db-adapter.ts        # 数据库适配器
 │   ├── auth.ts              # 认证配置
@@ -213,6 +223,17 @@ sanhub/
 │   └── picui.ts             # PicUI 图床 API
 └── types/                   # TypeScript 类型定义
 ```
+
+### 视频页面架构（已重构）
+
+视频生成页面已从 2112 行的单体组件重构为模块化架构：
+
+- **主页面** (`page.tsx`): ~350 行，负责组件编排
+- **自定义 Hooks**: 状态管理、任务轮询、图片上传、提示词增强
+- **UI 组件**: 10+ 个独立组件，每个 < 200 行
+- **工具函数**: 辅助函数和常量定义
+
+详细文档见 `.kiro/specs/video-page-refactor/COMPONENT_DOCUMENTATION.md`
 
 ## 💰 积分消耗
 
