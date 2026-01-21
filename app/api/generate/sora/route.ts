@@ -302,21 +302,47 @@ export async function POST(request: NextRequest) {
       const aspectRatio = body.aspectRatio || model.defaultAspectRatio;
       const duration = body.duration || model.defaultDuration;
       
+      console.log('[Video Generation] Model info:', {
+        modelId,
+        modelName: model.name,
+        apiModel: model.apiModel,
+        channelType: channel.type,
+        channelName: channel.name,
+        aspectRatio,
+        duration,
+      });
+      
       // Calculate cost based on channel type
       let estimatedCost = 0;
       if (channel.type === 'flow') {
         // Flow (Veo) models: use database pricing for 8s videos
         const config = await getSystemConfig();
         estimatedCost = config.pricing.veoVideo8s;
+        console.log('[Video Generation] Flow/Veo model cost calculation:', {
+          veoVideo8s: config.pricing.veoVideo8s,
+          estimatedCost,
+        });
       } else {
         // Sora models: use duration-based pricing from model config
         const durationCost = model.durations.find((d) => d.value === duration)?.cost;
         estimatedCost = typeof durationCost === 'number'
           ? durationCost
           : model.durations[0]?.cost || 0;
+        console.log('[Video Generation] Sora model cost calculation:', {
+          duration,
+          durationCost,
+          estimatedCost,
+          availableDurations: model.durations,
+        });
       }
 
       const user = await getUserById(session.user.id);
+      console.log('[Video Generation] User balance check:', {
+        userId: user?.id,
+        userBalance: user?.balance,
+        estimatedCost,
+        isAdmin: user?.role === 'admin',
+      });
       if (!user) {
         return NextResponse.json({ error: 'User not found' }, { status: 401 });
       }
@@ -324,6 +350,12 @@ export async function POST(request: NextRequest) {
       // Check balance (admin exempt)
       const isAdmin = user.role === 'admin';
       if (!isAdmin && user.balance < estimatedCost) {
+        console.log('[Video Generation] Insufficient balance:', {
+          userId: user.id,
+          userBalance: user.balance,
+          estimatedCost,
+          shortfall: estimatedCost - user.balance,
+        });
         return NextResponse.json(
           { error: `Insufficient balance. Need at least ${estimatedCost}.` },
           { status: 402 }
@@ -333,8 +365,15 @@ export async function POST(request: NextRequest) {
       // Deduct credits (admin exempt)
       if (!isAdmin) {
         try {
+          console.log('[Video Generation] Deducting balance:', {
+            userId: user.id,
+            amount: -estimatedCost,
+            beforeBalance: user.balance,
+          });
           await updateUserBalance(user.id, -estimatedCost, 'strict');
+          console.log('[Video Generation] Balance deducted successfully');
         } catch (err) {
+          console.error('[Video Generation] Balance deduction failed:', err);
           const message = err instanceof Error ? err.message : 'Insufficient balance';
           if (message.includes('Insufficient balance')) {
             return NextResponse.json(
@@ -344,6 +383,8 @@ export async function POST(request: NextRequest) {
           }
           throw err;
         }
+      } else {
+        console.log('[Video Generation] Admin user, skipping balance deduction');
       }
 
       const generationType: GenerationType = channel.type === 'flow' ? 'flow-video' : 'sora-video';
