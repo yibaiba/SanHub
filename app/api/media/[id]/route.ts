@@ -101,7 +101,11 @@ export async function GET(
       // 对于视频和图片，直接重定向到外部 URL（避免代理大文件及减少服务器带宽消耗）
       // 但如果请求明确要求 raw 数据（前端需要处理文件流），则不重定向
       if (!forceRaw && (generation.type.includes('video') || generation.type.includes('image'))) {
-        return NextResponse.redirect(safeUrl.toString(), 302);
+        const redirectResponse = NextResponse.redirect(safeUrl.toString(), 302);
+        // Cache redirect response for 30 days
+        redirectResponse.headers.set('Cache-Control', 'private, max-age=2592000, immutable');
+        redirectResponse.headers.set('Vary', 'Cookie');
+        return redirectResponse;
       }
       // 对于其他类型，代理请求
       return await proxyExternalUrl(safeUrl.toString(), generation.type, origin);
@@ -125,37 +129,41 @@ export async function GET(
   }
 }
 
-// 代理外部URL
+// Proxy external URL when raw data is needed (e.g., for client-side processing)
 async function proxyExternalUrl(url: string, type: string, origin: string): Promise<NextResponse> {
   try {
+    const maxBytes = type.includes('video') ? 100 * 1024 * 1024 : 20 * 1024 * 1024; // 100MB for video, 20MB for image
     const { buffer, contentType } = await fetchExternalBuffer(url, {
       origin,
       allowRelative: false,
-      maxBytes: 20 * 1024 * 1024,
-      timeoutMs: 15000,
+      maxBytes,
+      timeoutMs: 30000, // 30s for large files
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       },
     });
 
-    if (!contentType.startsWith('image/')) {
-      return new NextResponse('Unsupported media type', { status: 415 });
+    // Validate content type matches expected media type
+    const isValidImage = type.includes('image') && contentType.startsWith('image/');
+    const isValidVideo = type.includes('video') && contentType.startsWith('video/');
+    
+    if (!isValidImage && !isValidVideo) {
+      return new NextResponse('Content type mismatch', { status: 415 });
     }
 
-    const finalType = contentType || (type.includes('video') ? 'video/mp4' : 'image/png');
-    return createMediaResponse(buffer, finalType);
+    return createMediaResponse(buffer, contentType);
   } catch (error) {
     console.error('[Media API] Proxy error:', error);
     return new NextResponse('Proxy error', { status: 502 });
   }
 }
 
-// 创建媒体响应
+// Create media response with cache headers
 function createMediaResponse(buffer: Buffer, contentType: string): NextResponse {
-  // 允许浏览器缓存 3 个月 (7776000 秒)
-  // private: 仅允许终端用户浏览器缓存（不允许 CDN 缓存，保护隐私）
-  // immutable: 告知浏览器资源内容不会改变
-  const cacheControl = 'private, max-age=7776000, immutable';
+  // Allow browser to cache for 30 days (2592000 seconds)
+  // private: only allow end-user browser caching (not CDN, for privacy)
+  // immutable: tell browser the resource content will not change
+  const cacheControl = 'private, max-age=2592000, immutable';
 
   const headers: HeadersInit = {
     'Content-Type': contentType,
