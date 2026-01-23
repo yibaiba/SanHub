@@ -13,6 +13,7 @@ import {
   Dices,
   Info,
   X,
+  User,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { compressImageToWebP, fileToBase64 } from '@/lib/image-compression';
@@ -93,7 +94,12 @@ export default function ImageGenerationPage() {
   const [error, setError] = useState('');
   const [keepPrompt, setKeepPrompt] = useState(false);
   const [keepImages, setKeepImages] = useState(false);
-  
+
+  // 图片库状态
+  const [showImageLibrary, setShowImageLibrary] = useState(false);
+  const [libraryImages, setLibraryImages] = useState<Generation[]>([]);
+  const [loadingLibrary, setLoadingLibrary] = useState(false);
+
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMoreHistory, setHasMoreHistory] = useState(false);
@@ -168,6 +174,78 @@ export default function ImageGenerationPage() {
       }
     }
   }, [selectedModelId, availableModels]);
+
+  // 加载图片库
+  const loadLibrary = async () => {
+    setLoadingLibrary(true);
+    try {
+      // 复用现有的 history 接口，只筛选图片
+      const res = await fetch('/api/user/history?limit=50&page=1');
+      if (res.ok) {
+        const data = await res.json();
+        const images = (data.data || []).filter(
+          (g: Generation) =>
+            g.type.includes('image')
+        );
+        setLibraryImages(images);
+      }
+    } catch (err) {
+      console.error('Failed to load library:', err);
+      toast({
+        title: '加载失败',
+        description: '无法加载图片库',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoadingLibrary(false);
+    }
+  };
+
+  // 从库中选择图片
+  const handleSelectFromLibrary = async (generation: Generation) => {
+    try {
+      // 检查当前是否已达上传上限（目前设计未明确上限，假设为 4 或 1，这里参考 UI 通常是 4）
+      if (images.length >= 4) {
+        toast({
+          title: '数量限制',
+          description: '最多上传 4 张参考图',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // 获取图片 Blob
+      // 注意：加 ?raw=true 告诉后端不要重定向，而是代理回传二进制数据，
+      // 这样前端才能拿到 Blob 并创建 File 对象
+      const response = await fetch(`/api/media/${generation.id}?raw=true`);
+      if (!response.ok) throw new Error('Failed to fetch image data');
+
+      const blob = await response.blob();
+      const file = new File([blob], `ref-${generation.id}.jpg`, { type: blob.type });
+      const previewUrl = URL.createObjectURL(file);
+
+      setImages((prev) => [
+        ...prev,
+        {
+          file,
+          preview: previewUrl,
+        },
+      ]);
+
+      setShowImageLibrary(false);
+      toast({
+        title: '已添加',
+        description: '图片已添加到参考图列表',
+      });
+    } catch (err) {
+      console.error('Select image error:', err);
+      toast({
+        title: '添加失败',
+        description: '无法获取图片数据',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
@@ -848,29 +926,108 @@ export default function ImageGenerationPage() {
                     onChange={handleFileUpload}
                   />
                   {images.length === 0 ? (
-                    <div
-                      onClick={() => fileInputRef.current?.click()}
-                      className="border border-dashed border-border/70 rounded-lg p-5 text-center cursor-pointer hover:bg-card/70 hover:border-border transition-all"
-                    >
-                      <Upload className="w-6 h-6 mx-auto text-foreground/40 mb-2" />
-                      <p className="text-sm text-foreground/60">点击上传参考图</p>
+                    <div className="space-y-2">
+                      <div
+                        onClick={() => fileInputRef.current?.click()}
+                        className="border border-dashed border-border/70 rounded-lg p-5 text-center cursor-pointer hover:bg-card/70 hover:border-border transition-all"
+                      >
+                        <Upload className="w-6 h-6 mx-auto text-foreground/40 mb-2" />
+                        <p className="text-sm text-foreground/60">点击上传参考图</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowImageLibrary(true);
+                          loadLibrary();
+                        }}
+                        className="w-full py-2 px-3 text-sm text-foreground/70 hover:text-foreground border border-border/50 hover:border-border rounded-lg transition-all flex items-center justify-center gap-2"
+                      >
+                        <User className="w-4 h-4" />
+                        从我的图片库选择
+                      </button>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-4 gap-2">
-                      {images.map((img, i) => (
-                        <div
-                          key={i}
-                          className="aspect-square rounded-lg overflow-hidden border border-border/70"
-                        >
-                          <img
-                            src={img.preview}
-                            className="w-full h-full object-cover"
-                            alt=""
-                          />
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-4 gap-2">
+                        {images.map((img, i) => (
+                          <div
+                            key={i}
+                            className="aspect-square rounded-lg overflow-hidden border border-border/70 relative group"
+                          >
+                            <img
+                              src={img.preview}
+                              className="w-full h-full object-cover"
+                              alt=""
+                            />
+                            {/* 删除按钮 (可选，如果之前的代码没有) */}
+                          </div>
+                        ))}
+                      </div>
+                      {images.length < 4 && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="py-2 px-3 text-sm text-foreground/70 hover:text-foreground border border-border/50 hover:border-border rounded-lg transition-all flex items-center justify-center gap-2"
+                          >
+                            <Upload className="w-4 h-4" />
+                            继续上传
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowImageLibrary(true);
+                              loadLibrary();
+                            }}
+                            className="py-2 px-3 text-sm text-foreground/70 hover:text-foreground border border-border/50 hover:border-border rounded-lg transition-all flex items-center justify-center gap-2"
+                          >
+                            <User className="w-4 h-4" />
+                            图库选择
+                          </button>
                         </div>
-                      ))}
+                      )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Image Library Modal */}
+              {showImageLibrary && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+                  <div className="bg-background border border-border rounded-lg max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+                    <div className="flex items-center justify-between p-4 border-b border-border">
+                      <h3 className="text-lg font-medium">选择参考图</h3>
+                      <button
+                        onClick={() => setShowImageLibrary(false)}
+                        className="text-foreground/60 hover:text-foreground"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4">
+                      {loadingLibrary ? (
+                        <div className="text-center py-8 text-foreground/50">加载中...</div>
+                      ) : libraryImages.length === 0 ? (
+                        <div className="text-center py-8 text-foreground/50">暂无图片记录</div>
+                      ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                          {libraryImages.map((gen) => (
+                            <button
+                              key={gen.id}
+                              onClick={() => handleSelectFromLibrary(gen)}
+                              className="aspect-square rounded-lg overflow-hidden border-2 border-border/50 hover:border-sky-400 transition-all group relative"
+                            >
+                              <img
+                                src={gen.resultUrl}
+                                alt=""
+                                className="w-full h-full object-cover"
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 

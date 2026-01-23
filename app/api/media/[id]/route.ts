@@ -94,8 +94,13 @@ export async function GET(
         console.error('[Media API] Blocked external URL:', error);
         return new NextResponse('Invalid media URL', { status: 400 });
       }
+      // 检查是否强制需要原始数据 (用于前端 JS 获取 Blob/Base64)
+      const searchParams = request.nextUrl.searchParams;
+      const forceRaw = searchParams.get('raw') === 'true';
+
       // 对于视频和图片，直接重定向到外部 URL（避免代理大文件及减少服务器带宽消耗）
-      if (generation.type.includes('video') || generation.type.includes('image')) {
+      // 但如果请求明确要求 raw 数据（前端需要处理文件流），则不重定向
+      if (!forceRaw && (generation.type.includes('video') || generation.type.includes('image'))) {
         return NextResponse.redirect(safeUrl.toString(), 302);
       }
       // 对于其他类型，代理请求
