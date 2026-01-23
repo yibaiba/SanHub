@@ -89,7 +89,9 @@ export function ReferenceImageUploader({
         return;
       }
 
-      const response = await fetch(`/api/media/${generation.id}`);
+      const response = await fetch(`/api/media/${generation.id}`, {
+        cache: 'force-cache', // Use browser cache if available
+      });
       if (!response.ok) {
         throw new Error('Failed to fetch image');
       }
@@ -292,6 +294,8 @@ export function ReferenceImageUploader({
                         src={gen.resultUrl}
                         alt=""
                         className="w-full h-full object-cover"
+                        loading="lazy"
+                        decoding="async"
                       />
                     </button>
                   ))}

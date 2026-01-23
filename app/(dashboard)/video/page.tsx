@@ -139,8 +139,10 @@ export default function VideoGenerationPage() {
         }
       }
 
-      // 下载图片
-      const response = await fetch(`/api/media/${generation.id}`);
+      // Download image with cache support
+      const response = await fetch(`/api/media/${generation.id}`, {
+        cache: 'force-cache', // Use browser cache if available
+      });
       if (!response.ok) {
         throw new Error('Failed to fetch image');
       }
@@ -2106,6 +2108,8 @@ export default function VideoGenerationPage() {
                           src={`/api/media/${gen.id}`}
                           alt={gen.prompt || ''}
                           className="w-full h-full object-cover"
+                          loading="lazy"
+                          decoding="async"
                         />
                         
                         {/* Orientation Badge */}
