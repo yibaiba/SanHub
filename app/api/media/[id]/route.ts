@@ -94,11 +94,11 @@ export async function GET(
         console.error('[Media API] Blocked external URL:', error);
         return new NextResponse('Invalid media URL', { status: 400 });
       }
-      // 对于视频，直接重定向到外部 URL（避免代理大文件）
-      if (generation.type.includes('video')) {
+      // 对于视频和图片，直接重定向到外部 URL（避免代理大文件及减少服务器带宽消耗）
+      if (generation.type.includes('video') || generation.type.includes('image')) {
         return NextResponse.redirect(safeUrl.toString(), 302);
       }
-      // 对于图片，代理请求
+      // 对于其他类型，代理请求
       return await proxyExternalUrl(safeUrl.toString(), generation.type, origin);
     }
     
@@ -147,8 +147,11 @@ async function proxyExternalUrl(url: string, type: string, origin: string): Prom
 
 // 创建媒体响应
 function createMediaResponse(buffer: Buffer, contentType: string): NextResponse {
-  const cacheControl = 'private, max-age=0, no-store';
-  
+  // 允许浏览器缓存 3 个月 (7776000 秒)
+  // private: 仅允许终端用户浏览器缓存（不允许 CDN 缓存，保护隐私）
+  // immutable: 告知浏览器资源内容不会改变
+  const cacheControl = 'private, max-age=7776000, immutable';
+
   const headers: HeadersInit = {
     'Content-Type': contentType,
     'Content-Length': buffer.length.toString(),
