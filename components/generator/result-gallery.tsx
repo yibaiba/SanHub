@@ -41,6 +41,11 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [realResolution, setRealResolution] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRealResolution(null);
+  }, [selected]);
 
   useEffect(() => {
     setVisibleCount((prev) => {
@@ -62,7 +67,11 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
 
     const extension = type.includes('video') ? 'mp4' : 'png';
     try {
-      await downloadAsset(url, `sanhub-${id}.${extension}`);
+      // Add ?raw=true to force server proxy (avoid CORS issues with 302 redirects)
+      const downloadUrl = url.startsWith('/api/media/') 
+        ? `${url}?raw=true` 
+        : url;
+      await downloadAsset(downloadUrl, `sanhub-${id}.${extension}`);
     } catch (err) {
       console.error('Download failed', err);
       toast({
@@ -324,13 +333,31 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
                         </div>
                       </>
                     ) : (
-                      <img
-                        src={gen.resultUrl}
-                        alt={gen.prompt}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                        decoding="async"
-                      />
+                      <>
+                        <img
+                          src={gen.resultUrl}
+                          alt={gen.prompt}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                          decoding="async"
+                          onLoad={(e) => {
+                            const img = e.currentTarget;
+                            if (img.naturalWidth && img.naturalHeight) {
+                              const badge = img.parentElement?.querySelector('.resolution-badge');
+                              if (badge) {
+                                badge.textContent = `${img.naturalWidth}x${img.naturalHeight}`;
+                              }
+                            }
+                          }}
+                        />
+                        {(gen.params?.imageSize || gen.params?.size || gen.params?.aspectRatio) && (
+                          <div className="absolute top-2 left-2 px-2 py-1 bg-card/70 border border-border/70 backdrop-blur-sm rounded-md flex items-center gap-1 pointer-events-none">
+                            <span className="text-[10px] text-foreground font-medium resolution-badge">
+                              {gen.params.imageSize || gen.params.size || gen.params.aspectRatio}
+                            </span>
+                          </div>
+                        )}
+                      </>
                     )}
                     <div className="absolute inset-0 bg-background/70 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">
                       <div className="w-12 h-12 bg-card/70 border border-border/70 backdrop-blur-sm rounded-full flex items-center justify-center">
@@ -415,6 +442,12 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
                   src={selected.resultUrl}
                   alt={selected.prompt}
                   className="max-w-full max-h-[70vh] md:max-h-[75vh] w-auto h-auto rounded-xl border border-border/70 object-contain"
+                  onLoad={(e) => {
+                    const img = e.currentTarget;
+                    if (img.naturalWidth && img.naturalHeight) {
+                      setRealResolution(`${img.naturalWidth}x${img.naturalHeight}`);
+                    }
+                  }}
                 />
               )}
             </div>
@@ -425,6 +458,9 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
                   <p className="text-foreground text-sm leading-relaxed truncate md:whitespace-normal">{truncate(selected.prompt || '无提示词', 150)}</p>
                   <p className="text-foreground/40 text-xs mt-2">
                     {formatDate(selected.createdAt)} · 消耗 {selected.cost} 积分
+                    {(realResolution || selected.params?.imageSize || selected.params?.size || selected.params?.aspectRatio) && (
+                      <> · {realResolution || selected.params.imageSize || selected.params.size || selected.params.aspectRatio}</>
+                    )}
                   </p>
                   <div className="mt-3 space-y-2">
                     <div className="flex items-start gap-2">

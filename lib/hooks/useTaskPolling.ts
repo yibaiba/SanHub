@@ -32,10 +32,18 @@ export function useTaskPolling({
       const controller = new AbortController();
       abortControllersRef.current.set(taskId, controller);
 
-      const maxAttempts = 240; // 240 * 10s = 40 minutes
+      const maxAttempts = 240; // 240 attempts max
       const maxConsecutiveErrors = 5;
       let attempts = 0;
       let consecutiveErrors = 0;
+
+      // Adaptive polling intervals with exponential backoff
+      const getPollingInterval = (attemptCount: number): number => {
+        if (attemptCount <= 3) return 2000;      // First 3 attempts: 2s (fast initial check)
+        if (attemptCount <= 10) return 5000;     // Next 7 attempts: 5s
+        if (attemptCount <= 30) return 10000;    // Next 20 attempts: 10s
+        return 15000;                             // After 30 attempts: 15s (slow down)
+      };
 
       const poll = async (): Promise<void> => {
         if (controller.signal.aborted) return;
@@ -49,9 +57,19 @@ export function useTaskPolling({
         attempts++;
 
         try {
-          const res = await fetch(`/api/generate/status/${taskId}`, {
-            signal: controller.signal,
-          });
+          // Add per-request timeout to prevent socket leaks
+          const requestController = new AbortController();
+          const timeoutId = setTimeout(() => requestController.abort(), 30000); // 30s per request
+
+          let res: Response;
+          try {
+            res = await fetch(`/api/generate/status/${taskId}`, {
+              signal: requestController.signal,
+            });
+          } finally {
+            clearTimeout(timeoutId);
+          }
+          
           const data = await res.json();
 
           if (!res.ok) {
@@ -98,7 +116,7 @@ export function useTaskPolling({
               progress:
                 typeof data.data.progress === 'number' ? data.data.progress : undefined,
             });
-            setTimeout(poll, 10000);
+            setTimeout(poll, getPollingInterval(attempts));
           } else {
             const nextStatus =
               status === 'pending' || status === 'processing' ? status : 'processing';
@@ -107,7 +125,7 @@ export function useTaskPolling({
               progress:
                 typeof data.data.progress === 'number' ? data.data.progress : undefined,
             });
-            setTimeout(poll, 10000);
+            setTimeout(poll, getPollingInterval(attempts));
           }
         } catch (err) {
           if ((err as Error).name === 'AbortError') return;

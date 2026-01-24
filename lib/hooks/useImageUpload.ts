@@ -215,7 +215,7 @@ export function useImageUpload({
     [engine, currentFiles.length, onAspectRatioChange, cropImageToAspectRatio]
   );
 
-  // Handle file upload from input
+  // Handle file upload from input with concurrency control
   const handleFileUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const selectedFiles = Array.from(e.target.files || []);
@@ -232,12 +232,19 @@ export function useImageUpload({
       }
 
       const processedFiles: FileData[] = [];
+      const concurrencyLimit = 5; // Process max 5 files concurrently
 
-      for (const file of selectedFiles) {
-        const processed = await processFile(file);
-        if (processed) {
-          processedFiles.push(processed);
-        }
+      // Process files in batches to limit concurrency
+      for (let i = 0; i < selectedFiles.length; i += concurrencyLimit) {
+        const batch = selectedFiles.slice(i, i + concurrencyLimit);
+        const batchResults = await Promise.all(
+          batch.map((file) => processFile(file).catch((err) => {
+            console.error('Failed to process file:', err);
+            return null;
+          }))
+        );
+        
+        processedFiles.push(...batchResults.filter((f): f is FileData => f !== null));
       }
 
       // Add all processed files at once
@@ -279,14 +286,17 @@ export function useImageUpload({
         return;
       }
 
-      // Process pasted images
+      // Process pasted images with concurrency control
       const processedFiles: FileData[] = [];
+      const concurrencyLimit = 5;
 
-      for (const file of imageFiles) {
-        const processed = await processFile(file);
-        if (processed) {
-          processedFiles.push(processed);
-        }
+      for (let i = 0; i < imageFiles.length; i += concurrencyLimit) {
+        const batch = imageFiles.slice(i, i + concurrencyLimit);
+        const batchResults = await Promise.all(
+          batch.map((file) => processFile(file).catch(() => null))
+        );
+        
+        processedFiles.push(...batchResults.filter((f): f is FileData => f !== null));
       }
 
       // Add all processed files at once
@@ -329,14 +339,17 @@ export function useImageUpload({
         return;
       }
 
-      // Process dropped images
+      // Process dropped images with concurrency control
       const processedFiles: FileData[] = [];
+      const concurrencyLimit = 5;
 
-      for (const file of imageFiles) {
-        const processed = await processFile(file);
-        if (processed) {
-          processedFiles.push(processed);
-        }
+      for (let i = 0; i < imageFiles.length; i += concurrencyLimit) {
+        const batch = imageFiles.slice(i, i + concurrencyLimit);
+        const batchResults = await Promise.all(
+          batch.map((file) => processFile(file).catch(() => null))
+        );
+        
+        processedFiles.push(...batchResults.filter((f): f is FileData => f !== null));
       }
 
       // Add all processed files at once

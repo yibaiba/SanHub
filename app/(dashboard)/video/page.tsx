@@ -2110,11 +2110,26 @@ export default function VideoGenerationPage() {
                           className="w-full h-full object-cover"
                           loading="lazy"
                           decoding="async"
+                          onLoad={(e) => {
+                            const img = e.currentTarget;
+                            const badge = img.nextElementSibling?.querySelector('[data-resolution]');
+                            if (badge) {
+                              badge.textContent = `${img.naturalWidth}×${img.naturalHeight}`;
+                            }
+                          }}
                         />
                         
-                        {/* Orientation Badge */}
-                        <div className="absolute top-2 left-2 px-2 py-1 bg-black/70 backdrop-blur-sm rounded text-[10px] text-white font-medium pointer-events-none">
-                          {isLandscape ? '横屏' : isPortrait ? '竖屏' : '方形'}
+                        {/* Resolution & Orientation Badge */}
+                        <div className="absolute top-2 left-2 flex flex-col gap-1 pointer-events-none">
+                          <div className="px-2 py-1 bg-black/70 backdrop-blur-sm rounded text-[10px] text-white font-medium">
+                            {isLandscape ? '横屏' : isPortrait ? '竖屏' : '方形'}
+                          </div>
+                          <div 
+                            data-resolution 
+                            className="px-2 py-1 bg-black/70 backdrop-blur-sm rounded text-[10px] text-white font-mono"
+                          >
+                            Loading...
+                          </div>
                         </div>
                         
                         {/* Action Buttons */}

@@ -672,11 +672,11 @@ export const VEO_VIDEO_MODELS: VideoModelConfig[] = [
     highlight: false,
   },
 
-  // Veo 3.0 R2V Fast Series (2 models)
+  // Veo 3.1 R2V Fast Series (2 models)
   {
-    name: 'Veo 3.0 多图生成视频 Fast (竖屏)',
-    apiModel: 'veo_3_0_r2v_fast_portrait',
-    description: 'Veo 3.0 快速多图生成视频，竖屏 9:16',
+    name: 'Veo 3.1 多图生成视频 Fast (竖屏)',
+    apiModel: 'veo_3_1_r2v_fast_portrait',
+    description: 'Veo 3.1 快速多图生成视频，竖屏 9:16',
     features: {
       textToVideo: true,
       imageToVideo: true,
@@ -692,9 +692,9 @@ export const VEO_VIDEO_MODELS: VideoModelConfig[] = [
     highlight: true,
   },
   {
-    name: 'Veo 3.0 多图生成视频 Fast (横屏)',
-    apiModel: 'veo_3_0_r2v_fast_landscape',
-    description: 'Veo 3.0 快速多图生成视频，横屏 16:9',
+    name: 'Veo 3.1 多图生成视频 Fast (横屏)',
+    apiModel: 'veo_3_1_r2v_fast_landscape',
+    description: 'Veo 3.1 快速多图生成视频，横屏 16:9',
     features: {
       textToVideo: true,
       imageToVideo: true,

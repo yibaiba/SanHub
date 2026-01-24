@@ -485,7 +485,11 @@ export default function HistoryPage() {
 
     const extension = type.includes('video') ? 'mp4' : 'png';
     try {
-      await downloadAsset(url, `sanhub-${id}.${extension}`);
+      // Add ?raw=true to force server proxy (avoid CORS issues with 302 redirects)
+      const downloadUrl = url.startsWith('/api/media/') 
+        ? `${url}?raw=true` 
+        : url;
+      await downloadAsset(downloadUrl, `sanhub-${id}.${extension}`);
     } catch (err) {
       console.error('Download failed', err);
       toast({

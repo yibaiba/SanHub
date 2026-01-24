@@ -1,6 +1,7 @@
 import { getVideoModelWithChannel } from './db';
 import { fetchWithRetry } from './http-retry';
 import { generateWithSora } from './sora';
+import { uploadImageToVeo } from './image-upload';
 import type { GenerateResult } from '@/types';
 
 export interface VideoGenerateRequest {
@@ -9,6 +10,7 @@ export interface VideoGenerateRequest {
   aspectRatio?: string;
   duration?: string;
   files?: Array<{ mimeType: string; data: string }>;
+  imageIds?: string[]; // Support pre-uploaded image IDs
   styleId?: string;
   remixTargetId?: string;
 }
@@ -128,10 +130,24 @@ async function generateWithFlowChat(
   apiKey: string,
   apiModel: string
 ): Promise<GenerateResult> {
+  // Add random delay (0-3s) to avoid rate limiting on concurrent requests
+  const delayMs = Math.floor(Math.random() * 3000);
+  await new Promise(resolve => setTimeout(resolve, delayMs));
+
   const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
 
+  console.log('[Flow] Request info:', {
+    apiModel,
+    hasFiles: Boolean(request.files && request.files.length > 0),
+    filesCount: request.files?.length || 0,
+    prompt: request.prompt?.substring(0, 50),
+  });
+
   const contentParts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+  
+  // Use inline base64 images (not pre-uploaded image_ids)
   if (request.files && request.files.length > 0) {
+    console.log('[Flow] Using inline base64 images:', request.files.length);
     for (const file of request.files) {
       contentParts.push({
         type: 'image_url',
@@ -139,11 +155,21 @@ async function generateWithFlowChat(
       });
     }
   }
+  
   if (request.prompt) {
     contentParts.push({ type: 'text', text: request.prompt });
   }
 
-  const payload = {
+  console.log('[Flow] Content parts:', {
+    contentPartsCount: contentParts.length,
+    contentTypes: contentParts.map(p => p.type),
+  });
+
+  const payload: {
+    model: string;
+    messages: Array<{ role: string; content: string | typeof contentParts }>;
+    stream: boolean;
+  } = {
     model: apiModel,
     messages: [
       {
@@ -155,6 +181,8 @@ async function generateWithFlowChat(
     ],
     stream: true,
   };
+
+  console.log('[Flow] Sending request to:', url);
 
   const response = await fetchWithRetry(fetch, url, () => ({
     method: 'POST',

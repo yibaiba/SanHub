@@ -14,6 +14,7 @@ import {
   Info,
   X,
   User,
+  Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { compressImageToWebP, fileToBase64 } from '@/lib/image-compression';
@@ -276,6 +277,20 @@ export default function ImageGenerationPage() {
     images.forEach((img) => URL.revokeObjectURL(img.preview));
     setImages([]);
     setCompressedCache(new Map()); // 清理压缩缓存
+  };
+
+  const removeImage = (index: number) => {
+    const target = images[index];
+    URL.revokeObjectURL(target.preview);
+    setImages((prev) => prev.filter((_, i) => i !== index));
+
+    if ('file' in target && target.file) {
+      setCompressedCache((prev) => {
+        const newCache = new Map(prev);
+        newCache.delete(target.file);
+        return newCache;
+      });
+    }
   };
 
   // 轮询任务状态
@@ -948,7 +963,7 @@ export default function ImageGenerationPage() {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <div className="grid grid-cols-4 gap-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                         {images.map((img, i) => (
                           <div
                             key={i}
@@ -959,7 +974,12 @@ export default function ImageGenerationPage() {
                               className="w-full h-full object-cover"
                               alt=""
                             />
-                            {/* 删除按钮 (可选，如果之前的代码没有) */}
+                            <button
+                              onClick={() => removeImage(i)}
+                              className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-black/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <Trash2 className="w-3 h-3 text-white" />
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -1010,7 +1030,7 @@ export default function ImageGenerationPage() {
                       ) : libraryImages.length === 0 ? (
                         <div className="text-center py-8 text-foreground/50">暂无图片记录</div>
                       ) : (
-                        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                           {libraryImages.map((gen) => (
                             <button
                               key={gen.id}
@@ -1021,7 +1041,21 @@ export default function ImageGenerationPage() {
                                 src={gen.resultUrl}
                                 alt=""
                                 className="w-full h-full object-cover"
+                                loading="lazy"
+                                decoding="async"
+                                onLoad={(e) => {
+                                  const img = e.currentTarget;
+                                  const badge = img.nextElementSibling;
+                                  if (badge) {
+                                    badge.textContent = `${img.naturalWidth}×${img.naturalHeight}`;
+                                  }
+                                }}
                               />
+                              <div 
+                                className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 backdrop-blur-sm rounded text-[10px] text-white font-mono pointer-events-none"
+                              >
+                                ...
+                              </div>
                             </button>
                           ))}
                         </div>

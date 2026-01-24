@@ -296,7 +296,19 @@ export function ReferenceImageUploader({
                         className="w-full h-full object-cover"
                         loading="lazy"
                         decoding="async"
+                        onLoad={(e) => {
+                          const img = e.currentTarget;
+                          const badge = img.nextElementSibling;
+                          if (badge) {
+                            badge.textContent = `${img.naturalWidth}×${img.naturalHeight}`;
+                          }
+                        }}
                       />
+                      <div 
+                        className="absolute bottom-2 right-2 px-2 py-1 bg-black/70 backdrop-blur-sm rounded text-[10px] text-white font-mono pointer-events-none"
+                      >
+                        ...
+                      </div>
                     </button>
                   ))}
                 </div>
