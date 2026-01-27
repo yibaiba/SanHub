@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 /* eslint-disable @next/next/no-img-element */
 
 import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react';
@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { cn, fileToBase64 } from '@/lib/utils';
 import { toast } from '@/components/ui/toaster';
+import { MagicWand } from '@/components/generator/MagicWand';
 import type { Task } from '@/components/generator/result-gallery';
 import type { Generation, CharacterCard, SafeVideoModel, DailyLimitConfig } from '@/types';
 
@@ -1688,24 +1689,26 @@ export default function VideoGenerationPage() {
                       <div className="space-y-2 relative">
                         <div className="flex items-center justify-between">
                           <label className="text-xs text-foreground/50 uppercase tracking-wider">创作描述</label>
-                          <button
-                            type="button"
-                            onClick={handleEnhancePrompt}
-                            disabled={enhancing || !prompt.trim()}
-                            className={cn(
-                              'flex items-center gap-1 px-2 py-1 rounded text-xs transition-all',
-                              enhancing || !prompt.trim()
-                                ? 'text-foreground/40 cursor-not-allowed'
-                                : 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
-                            )}
-                          >
-                            {enhancing ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <Wand2 className="w-3 h-3" />
-                            )}
-                            <span>增强</span>
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={handleEnhancePrompt}
+                              disabled={enhancing || !prompt.trim()}
+                              className={cn(
+                                'flex items-center gap-1 px-2 py-1 rounded text-xs transition-all',
+                                enhancing || !prompt.trim()
+                                  ? 'text-foreground/40 cursor-not-allowed'
+                                  : 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
+                              )}
+                            >
+                              {enhancing ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Wand2 className="w-3 h-3" />
+                              )}
+                              <span>增强</span>
+                            </button>
+                          </div>
                         </div>
                         <textarea
                           ref={promptTextareaRef}
@@ -1770,24 +1773,26 @@ export default function VideoGenerationPage() {
                           <label className="text-xs text-foreground/50 uppercase tracking-wider flex items-center gap-2">
                             修改描述
                           </label>
-                          <button
-                            type="button"
-                            onClick={handleEnhancePrompt}
-                            disabled={enhancing || !prompt.trim()}
-                            className={cn(
-                              'flex items-center gap-1 px-2 py-1 rounded text-xs transition-all',
-                              enhancing || !prompt.trim()
-                                ? 'text-foreground/40 cursor-not-allowed'
-                                : 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
-                            )}
-                          >
-                            {enhancing ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <Wand2 className="w-3 h-3" />
-                            )}
-                            <span>增强</span>
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={handleEnhancePrompt}
+                              disabled={enhancing || !prompt.trim()}
+                              className={cn(
+                                'flex items-center gap-1 px-2 py-1 rounded text-xs transition-all',
+                                enhancing || !prompt.trim()
+                                  ? 'text-foreground/40 cursor-not-allowed'
+                                  : 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
+                              )}
+                            >
+                              {enhancing ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Wand2 className="w-3 h-3" />
+                              )}
+                              <span>增强</span>
+                            </button>
+                          </div>
                         </div>
                         <textarea
                           ref={remixPromptRef}
@@ -1943,24 +1948,13 @@ export default function VideoGenerationPage() {
                   <div className="space-y-2 relative">
                     <div className="flex items-center justify-between">
                       <label className="text-xs text-foreground/50 uppercase tracking-wider">创作描述</label>
-                      <button
-                        type="button"
-                        onClick={handleEnhancePrompt}
-                        disabled={enhancing || !prompt.trim()}
-                        className={cn(
-                          'flex items-center gap-1 px-2 py-1 rounded text-xs transition-all',
-                          enhancing || !prompt.trim()
-                            ? 'text-foreground/40 cursor-not-allowed'
-                            : 'text-sky-300 hover:text-sky-200 hover:bg-sky-500/10'
-                        )}
-                      >
-                        {enhancing ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <Wand2 className="w-3 h-3" />
-                        )}
-                        <span>增强</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <MagicWand
+                          prompt={prompt}
+                          onPromptChange={setPrompt}
+                          disabled={enhancing || submitting}
+                        />
+                      </div>
                     </div>
                     <textarea
                       ref={promptTextareaRef}

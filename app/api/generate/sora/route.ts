@@ -155,10 +155,17 @@ async function processGenerationTask(
       console.error(`[Task ${generationId}] 更新失败状态时出错:`, updateErr);
     }
 
+    // 退款
+    console.log(`[Task ${generationId}] Attempting refund: ${prechargedCost} credits to user ${userId}`);
     try {
-      await refundGenerationBalance(generationId, userId, prechargedCost);
+      const refunded = await refundGenerationBalance(generationId, userId, prechargedCost);
+      if (refunded) {
+        console.log(`[Task ${generationId}] ✓ Refund successful: ${prechargedCost} credits returned to user ${userId}`);
+      } else {
+        console.warn(`[Task ${generationId}] ✗ Refund skipped (already refunded or not precharged)`);
+      }
     } catch (refundErr) {
-      console.error(`[Task ${generationId}] Refund failed:`, refundErr);
+      console.error(`[Task ${generationId}] ✗ Refund failed:`, refundErr);
     }
   }
 }
@@ -240,10 +247,17 @@ async function processVideoTask(
       console.error(`[Task ${generationId}] Failed to update failure status:`, updateErr);
     }
 
+    // 退款
+    console.log(`[Task ${generationId}] Attempting refund: ${prechargedCost} credits to user ${userId}`);
     try {
-      await refundGenerationBalance(generationId, userId, prechargedCost);
+      const refunded = await refundGenerationBalance(generationId, userId, prechargedCost);
+      if (refunded) {
+        console.log(`[Task ${generationId}] ✓ Refund successful: ${prechargedCost} credits returned to user ${userId}`);
+      } else {
+        console.warn(`[Task ${generationId}] ✗ Refund skipped (already refunded or not precharged)`);
+      }
     } catch (refundErr) {
-      console.error(`[Task ${generationId}] Refund failed:`, refundErr);
+      console.error(`[Task ${generationId}] ✗ Refund failed:`, refundErr);
     }
   }
 }

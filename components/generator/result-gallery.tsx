@@ -8,6 +8,8 @@ import { formatDate, truncate } from '@/lib/utils';
 import { downloadAsset } from '@/lib/download';
 import { toast } from '@/components/ui/toaster';
 
+import { UpscaleControl } from './UpscaleControl';
+
 // 任务类型
 export interface Task {
   id: string;
@@ -42,6 +44,7 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [realResolution, setRealResolution] = useState<string | null>(null);
+  const [showUpscaleDialog, setShowUpscaleDialog] = useState<string | null>(null);
 
   useEffect(() => {
     setRealResolution(null);
@@ -430,13 +433,26 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
           <div className="w-full h-full flex flex-col items-center justify-center" onClick={(e) => e.stopPropagation()}>
             <div className="w-full max-w-[90vw] max-h-[70vh] md:max-h-[75vh] flex items-center justify-center">
               {isVideo(selected) ? (
-                <video
-                  src={selected.resultUrl}
-                  className="max-w-full max-h-[70vh] md:max-h-[75vh] w-auto h-auto rounded-xl border border-border/70"
-                  controls
-                  autoPlay
-                  loop
-                />
+                <>
+                  <video
+                    src={selected.resultUrl}
+                    className="max-w-full max-h-[70vh] md:max-h-[75vh] w-auto h-auto rounded-xl border border-border/70"
+                    controls
+                    autoPlay
+                    loop
+                  />
+                  {selected.type === 'flow-video' && (
+                    <div className="absolute top-4 right-16 z-10">
+                      <button
+                        onClick={() => setShowUpscaleDialog(selected.id)}
+                        className="flex items-center gap-2 px-4 py-2 bg-purple-500/90 backdrop-blur-sm text-white rounded-lg hover:bg-purple-500 transition-colors text-sm font-medium shadow-lg"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        超分
+                      </button>
+                    </div>
+                  )}
+                </>
               ) : (
                 <img
                   src={selected.resultUrl}
@@ -552,6 +568,15 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
                     <Download className="w-4 h-4" />
                     下载
                   </button>
+                  {isVideo(selected) && selected.type === 'flow-video' && (
+                    <button
+                      onClick={() => setShowUpscaleDialog(selected.id)}
+                      className="flex items-center justify-center gap-2 px-5 py-2.5 bg-purple-500 text-white rounded-xl hover:opacity-90 transition-colors text-sm font-medium"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      超分 Upscale
+                    </button>
+                  )}
                   {onDeleteGeneration && (
                     <button
                       onClick={() => confirmDelete(selected.id)}
@@ -628,6 +653,35 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Upscale Dialog */}
+      {showUpscaleDialog && (
+        <div
+          className="fixed inset-0 z-[60] bg-background/95 backdrop-blur-xl flex items-center justify-center p-4"
+          onClick={() => setShowUpscaleDialog(null)}
+        >
+          <div
+            className="bg-card/90 border border-border/70 rounded-2xl p-6 max-w-md w-full shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-4 mb-6">
+              <div className="w-12 h-12 rounded-full bg-purple-500/20 flex items-center justify-center shrink-0">
+                <Sparkles className="w-6 h-6 text-purple-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-medium text-foreground mb-2">视频超分 (Upscale)</h3>
+                <p className="text-sm text-foreground/70">
+                  将视频画质提升至 1080P 或 4K。处理过程需要一定时间。
+                </p>
+              </div>
+            </div>
+            <UpscaleControl 
+              mediaId={showUpscaleDialog} 
+              onClose={() => setShowUpscaleDialog(null)}
+            />
           </div>
         </div>
       )}

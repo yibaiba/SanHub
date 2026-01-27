@@ -180,6 +180,44 @@ async function getSoraConfig(options?: {
   };
 }
 
+// 获取 Flow 配置（用于魔法棒和超分功能）
+async function getFlowConfig(options?: {
+  channelId?: string;
+  mode?: 'default' | 'round-robin';
+}): Promise<SoraConfig> {
+  if (options?.channelId) {
+    const channel = await getVideoChannel(options.channelId);
+    if (channel && channel.type === 'flow' && channel.apiKey) {
+      return {
+        apiKey: channel.apiKey,
+        baseUrl: channel.baseUrl || DEFAULT_SORA_BASE_URL,
+        channelId: channel.id,
+      };
+    }
+  }
+
+  const channels = await getVideoChannels(true);
+  const flowChannels = channels.filter(c => c.type === 'flow' && c.apiKey);
+  if (flowChannels.length > 0) {
+    const selected =
+      options?.mode === 'round-robin'
+        ? pickRoundRobinChannel(flowChannels)
+        : flowChannels[0];
+    return {
+      apiKey: selected.apiKey,
+      baseUrl: selected.baseUrl || DEFAULT_SORA_BASE_URL,
+      channelId: selected.id,
+    };
+  }
+
+  // 回退到 Sora 配置（如果 Flow 和 Sora 共用同一个 API）
+  const config = await getSystemConfig();
+  return {
+    apiKey: config.soraApiKey || '',
+    baseUrl: config.soraBaseUrl || DEFAULT_SORA_BASE_URL,
+  };
+}
+
 // 创建自定义 Agent
 const soraAgent = new Agent({
   bodyTimeout: 0,
@@ -1437,4 +1475,124 @@ export async function enhancePrompt(request: EnhancePromptRequest): Promise<Enha
 
   logInfo('[Sora API] Prompt enhance completed');
   return data as EnhancePromptResponse;
+}
+
+// ========================================
+// Google VideoFX API (Magic Wand & Upscale)
+// ========================================
+
+// 1. Magic Wand (Prompt Enhancement)
+export interface MagicPromptRequest {
+  prompt: string;
+  style?: 'default' | 'noir' | 'action'; // default=Cinematic
+  stream?: boolean;
+}
+
+export async function generateMagicPrompt(request: MagicPromptRequest): Promise<ReadableStream<Uint8Array> | string> {
+  const { apiKey, baseUrl } = await getFlowConfig();
+  if (!apiKey) {
+    throw new Error('Flow API 未配置，请在管理后台「视频渠道」中添加 Flow 渠道');
+  }
+  if (!baseUrl) {
+    throw new Error('Flow Base URL 未配置');
+  }
+
+  const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
+  const apiUrl = `${normalizedBaseUrl}/v1/chat/completions`;
+
+  const modelMap = {
+    default: 'flow-magic-prompt',
+    noir: 'flow-magic-prompt-noir',
+    action: 'flow-magic-prompt-action',
+  };
+
+  const body = {
+    model: modelMap[request.style || 'default'],
+    messages: [{ role: 'user', content: request.prompt }],
+    stream: request.stream ?? false,
+  };
+
+  logInfo('[Sora API] Magic Prompt request:', { style: request.style, prompt: request.prompt.substring(0, 20) });
+
+  const response = await fetchWithRetry(undiciFetch, apiUrl, () => ({
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+    dispatcher: soraAgent,
+  }));
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Magic Prompt failed: ${response.status} ${errorText}`);
+  }
+
+  if (request.stream) {
+    return response.body as unknown as ReadableStream<Uint8Array>;
+  }
+
+  const data = await response.json() as any;
+  return data.choices?.[0]?.message?.content || '';
+}
+
+// 2. Video Upscale (Veo3 Only)
+export interface UpscaleRequest {
+  mediaId: string; // The original video ID
+  quality: '1080p' | '4k';
+}
+
+export interface UpscaleResponse {
+  taskId: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+}
+
+export async function createUpscaleTask(request: UpscaleRequest): Promise<UpscaleResponse> {
+  const { apiKey, baseUrl } = await getFlowConfig();
+  if (!apiKey) {
+    throw new Error('Flow API 未配置，请在管理后台「视频渠道」中添加 Flow 渠道');
+  }
+  if (!baseUrl) {
+    throw new Error('Flow Base URL 未配置');
+  }
+
+  const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
+  const apiUrl = `${normalizedBaseUrl}/v1/chat/completions`;
+
+  const modelMap = {
+    '1080p': 'veo-upscale-1080p',
+    '4k': 'veo-upscale-4k',
+  };
+
+  const body = {
+    model: modelMap[request.quality],
+    messages: [{ role: 'user', content: request.mediaId }],
+    stream: false, // Upscale tasks are async but trigger via non-stream
+  };
+
+  logInfo('[Sora API] Upscale task request:', { quality: request.quality, mediaId: request.mediaId });
+
+  const response = await fetchWithRetry(undiciFetch, apiUrl, () => ({
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+    dispatcher: soraAgent,
+  }));
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Upscale task failed: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json() as any;
+
+  // Return the task ID (assuming ID is in data.id)
+  return {
+    taskId: data.id,
+    status: 'queued',
+  };
 }

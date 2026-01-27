@@ -11,7 +11,7 @@ import { cache, CacheKeys, CacheTTL, withCache } from './cache';
 
 let adapter: DatabaseAdapter | null = null;
 
-function getAdapter(): DatabaseAdapter {
+export function getAdapter(): DatabaseAdapter {
   if (!adapter) {
     adapter = createDatabaseAdapter();
     console.log(`[DB] 使用数据库类 ${process.env.DB_TYPE || 'sqlite'}`);
@@ -55,7 +55,24 @@ CREATE TABLE IF NOT EXISTS generations (
   updated_at BIGINT NOT NULL,
   INDEX idx_user_id (user_id),
   INDEX idx_created_at (created_at),
-  INDEX idx_status (status)
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  INDEX idx_user_id (user_id)
+);
+
+-- 任务队列表 (用于超分等耗时任务)
+CREATE TABLE IF NOT EXISTS task_queue (
+  id VARCHAR(36) PRIMARY KEY,
+  user_id VARCHAR(36) NOT NULL,
+  type VARCHAR(32) NOT NULL, -- e.g. 'upscale_4k', 'upscale_1080p'
+  status VARCHAR(20) NOT NULL, -- 'pending', 'processing', 'completed', 'failed'
+  payload TEXT, -- JSON params (e.g. { mediaId: '...' })
+  result TEXT, -- JSON result (e.g. { url: '...' })
+  error_msg TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  INDEX idx_user_status (user_id, status),
+  INDEX idx_status_created (status, created_at)
 );
 
 -- 系统配置表

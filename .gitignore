@@ -131,3 +131,4 @@ json.json
 *.bak
 *.tmp
 *.temp
+.ace-tool/
