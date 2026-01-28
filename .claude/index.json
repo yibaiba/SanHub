@@ -1,0 +1,61 @@
+{
+  "last_updated": "2026-01-24T22:25:00",
+  "project_root": "D:\\code\\WebstormProjects\\SanHub",
+  "stats": {
+    "modules_identified": 6,
+    "coverage_percent": 98,
+    "files_scanned_count": 160
+  },
+  "modules": [
+    {
+      "name": "Video",
+      "path": "app/(dashboard)/video",
+      "description": "视频生成核心业务，包含分镜与Remix功能",
+      "tags": ["core", "refactored", "complex-ui"],
+      "docs_path": "app/(dashboard)/video/CLAUDE.md"
+    },
+    {
+      "name": "Workspace",
+      "path": "app/(dashboard)/workspace",
+      "description": "可视化工作流画布 (Node-based)",
+      "tags": ["canvas", "interactive", "react-flow"],
+      "docs_path": "app/(dashboard)/workspace/CLAUDE.md"
+    },
+    {
+      "name": "Admin",
+      "path": "app/admin",
+      "description": "系统管理后台 (Admin/Moderator)",
+      "tags": ["management", "secure", "auth"],
+      "docs_path": "app/admin/CLAUDE.md"
+    },
+    {
+      "name": "Gallery",
+      "path": "app/(dashboard)/gallery",
+      "description": "作品广场 (目前为重定向存根)",
+      "tags": ["stub", "redirect"],
+      "docs_path": "app/(dashboard)/gallery/CLAUDE.md"
+    },
+    {
+      "name": "Auth",
+      "path": "app/(auth)",
+      "description": "用户认证模块",
+      "tags": ["security", "next-auth"]
+    },
+    {
+      "name": "API",
+      "path": "app/api",
+      "description": "后端 API 路由 (Video/Image/Auth)",
+      "tags": ["backend", "routes"]
+    },
+    {
+      "name": "Lib",
+      "path": "lib",
+      "description": "核心工具库 (SoraAPI/DBAdapter)",
+      "tags": ["utils", "db", "api-client"]
+    }
+  ],
+  "next_steps": [
+    "检查 components/generator 下的共享 UI 组件",
+    "梳理 app/api 下的具体路由实现逻辑"
+  ]
+}

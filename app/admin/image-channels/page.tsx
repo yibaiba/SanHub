@@ -442,12 +442,60 @@ export default function ImageChannelsPage() {
     if (!confirm('确定删除该模型？')) return;
     try {
       const res = await fetch(`/api/admin/image-models?id=${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('删除失败');
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: `删除失败: ${data.error || 'Unknown error'}`, variant: 'destructive' });
+        return;
+      }
       toast({ title: '模型已删除' });
       loadData();
-    } catch {
-      toast({ title: '删除失败', variant: 'destructive' });
+    } catch (err) {
+      console.error('Delete model error:', err);
+      toast({ title: `删除失败: ${err instanceof Error ? err.message : 'Network error'}`, variant: 'destructive' });
     }
+  };
+
+  const batchDeleteModels = async (channelId: string) => {
+    const channelModels = models.filter(m => m.channelId === channelId);
+    if (channelModels.length === 0) {
+      toast({ title: '该渠道没有模型', variant: 'destructive' });
+      return;
+    }
+
+    if (!confirm(`确定要删除该渠道的所有 ${channelModels.length} 个模型吗？此操作不可恢复！`)) return;
+
+    setSaving(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const model of channelModels) {
+      try {
+        const res = await fetch(`/api/admin/image-models?id=${model.id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          successCount++;
+        } else {
+          console.error('Delete failed:', model.id, data);
+          failCount++;
+        }
+      } catch (err) {
+        console.error('Delete error:', model.id, err);
+        failCount++;
+      }
+    }
+
+    setSaving(false);
+
+    if (failCount === 0) {
+      toast({ title: `成功删除 ${successCount} 个模型` });
+    } else {
+      toast({
+        title: `删除完成：${successCount} 成功，${failCount} 失败`,
+        variant: failCount > successCount ? 'destructive' : undefined,
+      });
+    }
+
+    loadData();
   };
 
   const toggleModelEnabled = async (model: ImageModel) => {
@@ -1249,14 +1297,26 @@ export default function ImageChannelsPage() {
                             <Download className="w-4 h-4" />
                           </button>
                           {channel.type === 'flow' && (
-                            <button
-                              onClick={() => batchImportVeoImageModels(channel.id)}
-                              disabled={batchImporting}
-                              className="p-2 text-foreground/40 hover:text-purple-400 hover:bg-purple-500/10 rounded-lg"
-                              title="Batch import Veo image models"
-                            >
-                              {batchImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                            </button>
+                            <>
+                              <button
+                                onClick={() => batchImportVeoImageModels(channel.id)}
+                                disabled={batchImporting}
+                                className="p-2 text-foreground/40 hover:text-purple-400 hover:bg-purple-500/10 rounded-lg"
+                                title="Batch import Veo image models"
+                              >
+                                {batchImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                              </button>
+                              {channelModels.length > 0 && (
+                                <button
+                                  onClick={() => batchDeleteModels(channel.id)}
+                                  disabled={saving}
+                                  className="p-2 text-foreground/40 hover:text-red-400 hover:bg-red-500/10 rounded-lg"
+                                  title="Batch delete all models in this channel"
+                                >
+                                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                                </button>
+                              )}
+                            </>
                           )}
                         </>
                       )}

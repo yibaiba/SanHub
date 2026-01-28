@@ -4,6 +4,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
+import { WORKFLOW_PRESETS } from '@/lib/workflow-templates';
+import {
+  ExecutionManager,
+  StateManager,
+  NodeExecutionState,
+  WorkflowExporter,
+  WorkflowImporter
+} from '@/lib/workflow-engine';
+import { useWorkflowEngine } from '@/components/workspace/hooks/useWorkflowEngine';
 import {
   Check,
   ChevronDown,
@@ -24,6 +33,16 @@ import {
   FileText,
   Send,
   Image as ImageIcon,
+  Play,
+  Square,
+  Upload,
+  Share2,
+  Copy,
+  ToggleLeft,
+  ToggleRight,
+  LayoutTemplate,
+  X as XIcon,
+  Film,
 } from 'lucide-react';
 import { toast } from '@/components/ui/toaster';
 import { cn } from '@/lib/utils';
@@ -42,10 +61,10 @@ function getImageResolution(
   imageSize?: string
 ): string {
   const ratioConfig = model.resolutions[aspectRatio];
-  
+
   if (!ratioConfig) return '';
-  
-  // If ratioConfig is a string, it's either a pixel resolution (e.g., "1024x1024") 
+
+  // If ratioConfig is a string, it's either a pixel resolution (e.g., "1024x1024")
   // or a model name for simple ratio->model mapping
   if (typeof ratioConfig === 'string') {
     // Check if it looks like a pixel resolution
@@ -55,7 +74,7 @@ function getImageResolution(
     // Otherwise it's a model name, don't display it
     return '';
   }
-  
+
   // ratioConfig is an object: { imageSize: modelName or resolution }
   if (typeof ratioConfig === 'object' && imageSize) {
     const sizeConfig = ratioConfig[imageSize];
@@ -68,19 +87,26 @@ function getImageResolution(
       return imageSize;
     }
   }
-  
+
   // For models with imageSize feature, display the selected size
   if (model.features.imageSize && imageSize) {
     return imageSize;
   }
-  
+
   return '';
 }
 
-interface PromptTemplate {
-  id: string;
-  name: string;
-  content: string;
+// 尝试解析分镜 JSON
+function tryParseStoryboard(text: string) {
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const json = JSON.parse(jsonMatch[0]);
+    if (json.scenes && Array.isArray(json.scenes)) return json;
+    return null;
+  } catch (e) {
+    return null;
+  }
 }
 
 const CHAT_MAX_LENGTH = 2000;
@@ -126,8 +152,9 @@ export default function WorkspaceEditorPage() {
   const [dragging, setDragging] = useState<DragState>(null);
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sourceNodeId?: string } | null>(null);
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [hoveredCard, setHoveredCard] = useState<{
     nodeId: string;
     card: CharacterCard;
@@ -345,6 +372,90 @@ export default function WorkspaceEditorPage() {
         title: '保存失败',
         description: error instanceof Error ? error.message : '保存失败',
       });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleExport = () => {
+    const exporter = new WorkflowExporter();
+    exporter.exportWorkflow(workspaceId, nodes, edges, workspaceName).then(template => {
+      const blob = exporter.generateDownload(template);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${workspaceName || 'workflow'}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+  };
+
+  const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const content = e.target?.result as string;
+        const template = JSON.parse(content);
+        await applyTemplate(template);
+      } catch (error) {
+        toast({ title: '导入失败', description: '文件格式错误' });
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = ''; // Reset
+  };
+
+  const applyTemplate = async (template: any) => {
+    const importer = new WorkflowImporter();
+    const validation = importer.validateTemplate(template);
+
+    if (!validation.valid) {
+      toast({ title: '导入失败', description: validation.errors.map(e => e.message).join(', ') });
+      return;
+    }
+
+    const { nodes: newNodes, edges: newEdges } = importer.parseTemplate(template);
+
+    // Check if workspace is empty
+    if (nodes.length > 0) {
+      if (!confirm('应用模板将清空当前工作流，是否继续？')) return;
+    }
+
+    setNodes(newNodes);
+    setEdges(newEdges);
+    setDirty(true);
+    setTemplateModalOpen(false);
+    toast({ title: '模板应用成功' });
+  };
+
+  const handleShare = async () => {
+    const exporter = new WorkflowExporter();
+    const template = await exporter.exportWorkflow(workspaceId, nodes, edges, workspaceName);
+
+    try {
+      setSaving(true);
+      const res = await fetch('/api/share/workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspaceId,
+          template
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      // Copy to clipboard
+      await navigator.clipboard.writeText(data.data.url);
+      toast({ title: '分享链接已复制', description: '链接有效期永久有效' });
+    } catch (error) {
+      toast({ title: '分享失败', description: error instanceof Error ? error.message : '未知错误' });
     } finally {
       setSaving(false);
     }
@@ -663,6 +774,16 @@ export default function WorkspaceEditorPage() {
     );
   }, [setNodesDirty]);
 
+  const { runWorkflow, stopWorkflow, isExecuting } = useWorkflowEngine({
+    workspaceId,
+    nodes,
+    edges,
+    imageModels,
+    videoModels,
+    chatModels,
+    updateNodeData,
+  });
+
   const updateNode = (id: string, partial: Partial<WorkspaceNode>) => {
     setNodesDirty((prev) => prev.map((node) => (node.id === id ? { ...node, ...partial } : node)));
   };
@@ -852,8 +973,11 @@ export default function WorkspaceEditorPage() {
         }
 
         if (imageInputEdge && model.features.imageToImage && !referenceImageUrl && !referenceImages) {
-          updateNodeData(node.id, { errorMessage: '请先生成上游图片', status: 'failed' });
-          return;
+          // 仅当模型明确要求必须有参考图时才报错，否则降级为文生图
+          if (model.requiresReferenceImage) {
+             updateNodeData(node.id, { errorMessage: '该模型需要参考图', status: 'failed' });
+             return;
+          }
         }
         if (model.requiresReferenceImage && !referenceImageUrl && !referenceImages) {
           updateNodeData(node.id, { errorMessage: '该模型需要参考图', status: 'failed' });
@@ -911,6 +1035,12 @@ export default function WorkspaceEditorPage() {
           referenceImageUrl = node.data.uploadedImages[0];
         }
 
+        // Auto-detect mode: Image-to-Video vs Text-to-Video
+        const isImg2Vid = !!referenceImageUrl;
+
+        // 如果是 Veo 模型，可能需要特殊处理（假设都走统一接口，由 modelId 区分）
+        // 这里主要确保 prompt 和 referenceImageUrl 正确传递
+
         const res = await fetch('/api/generate/sora', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -919,7 +1049,7 @@ export default function WorkspaceEditorPage() {
             prompt: basePrompt,
             aspectRatio: node.data.aspectRatio || model.defaultAspectRatio,
             duration: node.data.duration || model.defaultDuration,
-            ...(referenceImageUrl ? { referenceImageUrl } : {}),
+            referenceImageUrl: isImg2Vid ? referenceImageUrl : undefined,
           }),
         });
 
@@ -938,7 +1068,7 @@ export default function WorkspaceEditorPage() {
     }
   }, [imageModels, pollTaskStatus, updateNodeData, videoModels]);
 
-  const handleChatGenerate = async (node: WorkspaceNode) => {
+    const handleChatGenerate = async (node: WorkspaceNode) => {
     let prompt = node.data.prompt.trim();
     if (!node.data.chatModelId) {
       updateNodeData(node.id, { errorMessage: '请选择聊天模型', status: 'failed' });
@@ -949,7 +1079,7 @@ export default function WorkspaceEditorPage() {
     const inputEdges = edgesRef.current.filter((edge) => edge.to === node.id);
     const inputImages: string[] = [];
     let templateContent = '';
-    
+
     for (const edge of inputEdges) {
       const inputNode = nodesRef.current.find((n) => n.id === edge.from);
       if (inputNode?.type === 'image' && inputNode.data.outputUrl) {
@@ -969,6 +1099,11 @@ export default function WorkspaceEditorPage() {
     if (!prompt) {
       updateNodeData(node.id, { errorMessage: '请输入提示词或连接模板节点', status: 'failed' });
       return;
+    }
+
+    // Pure Mode: Append system instruction
+    if (node.data.pureMode) {
+      prompt = `${prompt}\n\n(IMPORTANT: Output ONLY the resulting prompt text. Do not include any conversational filler, intro, outro, or explanations. Just the raw prompt.)`;
     }
 
     // Check if model supports vision when images are provided
@@ -1156,19 +1291,66 @@ export default function WorkspaceEditorPage() {
             className="text-xl sm:text-2xl font-light text-foreground bg-transparent border border-border/70 rounded-lg px-3 py-2 w-full max-w-md focus:outline-none focus:border-border"
           />
         </div>
-        <button
-          onClick={handleSave}
-          disabled={!dirty || saving}
-          className={cn(
-            'w-full sm:w-auto inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition shrink-0',
-            dirty
-              ? 'bg-foreground text-background hover:bg-foreground/90'
-              : 'bg-card/70 text-foreground/40 cursor-not-allowed'
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          {!isExecuting ? (
+            <button
+              onClick={runWorkflow}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-green-500/10 text-green-500 font-medium hover:bg-green-500/20 transition shrink-0"
+            >
+              <Play className="w-4 h-4" />
+              运行工作流
+            </button>
+          ) : (
+            <button
+              onClick={stopWorkflow}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-500/10 text-red-500 font-medium hover:bg-red-500/20 transition shrink-0"
+            >
+              <Square className="w-4 h-4 fill-current" />
+              停止
+            </button>
           )}
-        >
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          保存
-        </button>
+          <button
+            onClick={handleSave}
+            disabled={!dirty || saving}
+            className={cn(
+              'w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition shrink-0',
+              dirty
+                ? 'bg-foreground text-background hover:bg-foreground/90'
+                : 'bg-card/70 text-foreground/40 cursor-not-allowed'
+            )}
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            保存
+          </button>
+
+          <div className="flex items-center gap-1 border-l border-border/50 pl-3 ml-1">
+            <button
+              onClick={() => setTemplateModalOpen(true)}
+              className="p-2 rounded-lg hover:bg-card/70 text-foreground/60 hover:text-foreground transition"
+              title="模板库"
+            >
+              <LayoutTemplate className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleExport}
+              className="p-2 rounded-lg hover:bg-card/70 text-foreground/60 hover:text-foreground transition"
+              title="导出工作流"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+            <label className="p-2 rounded-lg hover:bg-card/70 text-foreground/60 hover:text-foreground transition cursor-pointer" title="导入工作流">
+              <input type="file" accept=".json" onChange={handleImport} className="hidden" />
+              <Upload className="w-4 h-4" />
+            </label>
+            <button
+              onClick={handleShare}
+              className="p-2 rounded-lg hover:bg-card/70 text-foreground/60 hover:text-foreground transition"
+              title="分享工作流"
+            >
+              <Share2 className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="bg-card/60 border border-border/70 rounded-2xl overflow-hidden flex-1 min-h-0">
@@ -1221,6 +1403,15 @@ export default function WorkspaceEditorPage() {
             setContextMenu(null);
             const target = event.target as HTMLElement | null;
             if (target?.closest('[data-workspace-node]')) return;
+
+            // Handle Quick Add if connecting
+            if (connectingFrom) {
+              const point = getCanvasPoint(event);
+              setContextMenu({ x: point.x, y: point.y, sourceNodeId: connectingFrom });
+              // Don't clear connectingFrom yet, let the menu handle it
+              return;
+            }
+
             setConnectingFrom(null);
             setCursorPos(null);
           }}
@@ -1311,6 +1502,16 @@ export default function WorkspaceEditorPage() {
                       />
                     </div>
                     <div className="flex items-center gap-1">
+                      {node.type === 'chat' && (
+                        <button
+                          onClick={() => duplicateNode(node.id)}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          className="text-foreground/40 hover:text-foreground transition"
+                          title="克隆节点"
+                        >
+                          <Copy className="w-4 h-4" />
+                        </button>
+                      )}
                       {(node.type === 'image' || node.type === 'video' || node.type === 'chat') && (
                         <button
                           onClick={() => {
@@ -1363,6 +1564,16 @@ export default function WorkspaceEditorPage() {
                     {/* Prompt Template Node */}
                     {node.type === 'prompt-template' && (
                       <>
+                        <div className="absolute top-2 right-12">
+                          <button
+                            onClick={() => duplicateNode(node.id)}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            className="text-foreground/40 hover:text-foreground transition p-1"
+                            title="克隆节点"
+                          >
+                            <Copy className="w-4 h-4" />
+                          </button>
+                        </div>
                         <div className="space-y-1">
                           <label className="text-[10px] uppercase tracking-wider text-foreground/40">模板</label>
                           <div className="relative">
@@ -1458,7 +1669,20 @@ export default function WorkspaceEditorPage() {
                         <div className="space-y-1">
                           <div className="flex items-center justify-between">
                             <label className="text-[10px] uppercase tracking-wider text-foreground/40">提示词</label>
-                            <span className="text-[10px] text-foreground/30">{node.data.prompt.length}/{CHAT_MAX_LENGTH}</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => updateNodeData(node.id, { pureMode: !node.data.pureMode })}
+                                className={cn(
+                                  "flex items-center gap-1 text-[10px] transition-colors",
+                                  node.data.pureMode ? "text-green-400" : "text-foreground/30 hover:text-foreground/50"
+                                )}
+                                title="纯净模式：开启后仅输出提示词内容，不包含对话废话"
+                              >
+                                {node.data.pureMode ? <ToggleRight className="w-3 h-3" /> : <ToggleLeft className="w-3 h-3" />}
+                                纯净模式
+                              </button>
+                              <span className="text-[10px] text-foreground/30">{node.data.prompt.length}/{CHAT_MAX_LENGTH}</span>
+                            </div>
                           </div>
                           <textarea
                             value={node.data.prompt}
@@ -1502,7 +1726,24 @@ export default function WorkspaceEditorPage() {
 
                         {node.data.chatOutput && (
                           <div className="space-y-1">
-                            <label className="text-[10px] uppercase tracking-wider text-foreground/40">输出</label>
+                            <div className="flex items-center justify-between">
+                              <label className="text-[10px] uppercase tracking-wider text-foreground/40">输出</label>
+                              {(() => {
+                                const storyboard = tryParseStoryboard(node.data.chatOutput);
+                                if (storyboard) {
+                                  return (
+                                    <button
+                                      onClick={() => explodeStoryboard(node.id, storyboard)}
+                                      className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[10px] hover:bg-blue-500/20 transition"
+                                    >
+                                      <Film className="w-3 h-3" />
+                                      生成 {storyboard.scenes.length} 组分镜
+                                    </button>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </div>
                             <div className="text-[10px] text-foreground/60 bg-card/60 rounded-lg px-2 py-1.5 max-h-40 overflow-auto whitespace-pre-wrap">
                               {node.data.chatOutput}
                             </div>
@@ -1514,6 +1755,16 @@ export default function WorkspaceEditorPage() {
                     {/* Image/Video Node - Model Selection */}
                     {(node.type === 'image' || node.type === 'video') && model && (
                     <>
+                    <div className="absolute top-2 right-12 flex gap-1">
+                      <button
+                        onClick={() => duplicateNode(node.id)}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        className="text-foreground/40 hover:text-foreground transition p-1"
+                        title="克隆节点"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                    </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase tracking-wider text-foreground/40">模型</label>
                       <div className="relative">
@@ -1523,10 +1774,13 @@ export default function WorkspaceEditorPage() {
                             const nextId = e.target.value;
                             if (node.type === 'image') {
                               const nextModel = imageModels.find(m => m.id === nextId) || imageModels[0];
+                              // 智能选择默认分辨率：优先用默认值，否则用列表第一个，最后兜底 '1K'
+                              const defaultSize = nextModel?.defaultImageSize || (nextModel?.imageSizes && nextModel.imageSizes.length > 0 ? nextModel.imageSizes[0] : '1K');
+
                               updateNodeData(node.id, {
                                 modelId: nextId,
                                 aspectRatio: nextModel?.defaultAspectRatio || '1:1',
-                                imageSize: nextModel?.defaultImageSize,
+                                imageSize: defaultSize,
                               });
                               if (nextModel && !nextModel.features.imageToImage) {
                                 const hasIncoming = edges.some((edge) => edge.to === node.id);
@@ -1560,7 +1814,7 @@ export default function WorkspaceEditorPage() {
                       <div className="space-y-1">
                         <label className="text-[10px] uppercase tracking-wider text-foreground/40">比例</label>
                         <select
-                          value={node.data.aspectRatio || (model as SafeImageModel | SafeVideoModel)?.defaultAspectRatio || '1:1'}
+                          value={node.data.aspectRatio || '1:1'}
                           onChange={(e) => updateNodeData(node.id, { aspectRatio: e.target.value })}
                           className="w-full px-2 py-2 bg-card/60 border border-border/70 rounded-lg text-foreground focus:outline-none focus:border-border"
                         >
@@ -1582,7 +1836,7 @@ export default function WorkspaceEditorPage() {
                         <div className="space-y-1">
                           <label className="text-[10px] uppercase tracking-wider text-foreground/40">分辨率</label>
                           <select
-                            value={node.data.imageSize || (model as SafeImageModel)?.defaultImageSize || '1K'}
+                            value={node.data.imageSize || '1K'}
                             onChange={(e) => updateNodeData(node.id, { imageSize: e.target.value })}
                             disabled={!(model as SafeImageModel)?.features?.imageSize}
                             className="w-full px-2 py-2 bg-card/60 border border-border/70 rounded-lg text-foreground focus:outline-none focus:border-border disabled:opacity-40"
@@ -1618,6 +1872,19 @@ export default function WorkspaceEditorPage() {
 
                     {node.type === 'video' && (
                       <div className="space-y-2">
+                        {/* 自动检测模式显示 */}
+                        <div className="flex items-center gap-2 text-[10px] bg-card/40 px-2 py-1.5 rounded-lg border border-border/50">
+                           {incoming.some(e => nodes.find(n => n.id === e.from)?.type === 'image') || (node.data.uploadedImages && node.data.uploadedImages.length > 0) ? (
+                             <span className="text-blue-400 flex items-center gap-1">
+                               <ImageIcon className="w-3 h-3" /> 图生视频模式 (Image-to-Video)
+                             </span>
+                           ) : (
+                             <span className="text-foreground/60 flex items-center gap-1">
+                               <FileText className="w-3 h-3" /> 文生视频模式 (Text-to-Video)
+                             </span>
+                           )}
+                        </div>
+
                         <div className="flex items-center justify-between">
                           <label className="text-[10px] uppercase tracking-wider text-foreground/40">角色卡</label>
                           <span className="text-[10px] text-foreground/30">
@@ -1899,43 +2166,68 @@ export default function WorkspaceEditorPage() {
 
               {contextMenu && (
                 <div
-                  className="absolute z-20 bg-card/95 border border-border/70 rounded-lg shadow-xl p-2 text-sm text-foreground/80"
+                  className="absolute z-50 bg-card/95 border border-border/70 rounded-lg shadow-xl p-2 text-sm text-foreground/80 min-w-[160px]"
                   style={{ left: contextMenu.x, top: contextMenu.y }}
                 >
+                  {contextMenu.sourceNodeId && (
+                    <div className="px-3 py-1.5 text-xs text-foreground/40 border-b border-border/50 mb-1">
+                      连接到新节点...
+                    </div>
+                  )}
                   <button
                     onClick={() => {
-                      addNodeAt('image', contextMenu);
+                      const newNode = createNode('image', { x: contextMenu.x, y: contextMenu.y });
+                      setNodesDirty((prev) => [...prev, newNode]);
+                      if (contextMenu.sourceNodeId) {
+                        handleFinishConnect(newNode.id, contextMenu.sourceNodeId, setConnectingFrom);
+                      }
                       setContextMenu(null);
                     }}
-                    className="block w-full text-left px-3 py-2 rounded hover:bg-card/70"
+                    className="flex items-center gap-2 w-full text-left px-3 py-2 rounded hover:bg-card/70"
                   >
+                    <ImageIcon className="w-4 h-4" />
                     添加图片节点
                   </button>
                   <button
                     onClick={() => {
-                      addNodeAt('video', contextMenu);
+                      const newNode = createNode('video', { x: contextMenu.x, y: contextMenu.y });
+                      setNodesDirty((prev) => [...prev, newNode]);
+                      if (contextMenu.sourceNodeId) {
+                        handleFinishConnect(newNode.id, contextMenu.sourceNodeId, setConnectingFrom);
+                      }
                       setContextMenu(null);
                     }}
-                    className="block w-full text-left px-3 py-2 rounded hover:bg-card/70"
+                    className="flex items-center gap-2 w-full text-left px-3 py-2 rounded hover:bg-card/70"
                   >
+                    <Video className="w-4 h-4" />
                     添加视频节点
                   </button>
                   <button
                     onClick={() => {
-                      addNodeAt('chat', contextMenu);
+                      const newNode = createNode('chat', { x: contextMenu.x, y: contextMenu.y });
+                      setNodesDirty((prev) => [...prev, newNode]);
+                      if (contextMenu.sourceNodeId) {
+                        handleFinishConnect(newNode.id, contextMenu.sourceNodeId, setConnectingFrom);
+                      }
                       setContextMenu(null);
                     }}
-                    className="block w-full text-left px-3 py-2 rounded hover:bg-card/70"
+                    className="flex items-center gap-2 w-full text-left px-3 py-2 rounded hover:bg-card/70"
                   >
+                    <MessageSquare className="w-4 h-4" />
                     添加聊天节点
                   </button>
                   <button
                     onClick={() => {
-                      addNodeAt('prompt-template', contextMenu);
+                      const newNode = createNode('prompt-template', { x: contextMenu.x, y: contextMenu.y });
+                      setNodesDirty((prev) => [...prev, newNode]);
+                      if (contextMenu.sourceNodeId) {
+                        handleFinishConnect(newNode.id, contextMenu.sourceNodeId, setConnectingFrom);
+                      }
                       setContextMenu(null);
                     }}
-                    className="block w-full text-left px-3 py-2 rounded hover:bg-card/70"
+                    className="flex items-center gap-2 w-full text-left px-3 py-2 rounded hover:bg-card/70"
                   >
+                    <FileText className="w-4 h-4" />
                     添加提示词模板
                   </button>
                 </div>
@@ -2009,6 +2301,47 @@ export default function WorkspaceEditorPage() {
                   >
                     <Icon className="w-4 h-4" />
                     <span className="text-xs font-medium">{label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {templateModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-4xl bg-card border border-border/70 rounded-2xl shadow-2xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-border/70">
+              <div>
+                <h2 className="text-xl font-medium text-foreground">工作流模板库</h2>
+                <p className="text-sm text-foreground/50 mt-1">选择一个预设模板快速开始，或使用 AI 辅助生成</p>
+              </div>
+              <button
+                onClick={() => setTemplateModalOpen(false)}
+                className="p-2 rounded-lg hover:bg-muted text-foreground/60 hover:text-foreground transition"
+              >
+                <XIcon className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {WORKFLOW_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    onClick={() => applyTemplate(preset.template)}
+                    className="flex flex-col items-start text-left p-4 rounded-xl border border-border/70 bg-card/40 hover:bg-card/80 hover:border-foreground/20 transition group"
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-foreground/5 flex items-center justify-center mb-3 group-hover:bg-foreground/10 transition">
+                      <LayoutTemplate className="w-5 h-5 text-foreground/70" />
+                    </div>
+                    <h3 className="font-medium text-foreground">{preset.name}</h3>
+                    <p className="text-xs text-foreground/50 mt-1 line-clamp-2">{preset.description}</p>
+                    <div className="mt-4 flex items-center gap-2 text-[10px] text-foreground/40">
+                      <span className="bg-foreground/5 px-2 py-0.5 rounded-full">{preset.template.metadata.nodeCount} 节点</span>
+                      <span className="bg-foreground/5 px-2 py-0.5 rounded-full">{preset.template.metadata.edgeCount} 连线</span>
+                    </div>
                   </button>
                 ))}
               </div>

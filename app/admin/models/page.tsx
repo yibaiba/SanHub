@@ -105,12 +105,59 @@ export default function ModelsPage() {
     if (!confirm('确定删除该模型？')) return;
     try {
       const res = await fetch(`/api/chat/models?id=${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('删除失败');
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: `删除失败: ${data.error || 'Unknown error'}`, variant: 'destructive' });
+        return;
+      }
       toast({ title: '模型已删除' });
       loadModels();
     } catch (err) {
-      toast({ title: '删除失败', variant: 'destructive' });
+      console.error('Delete model error:', err);
+      toast({ title: `删除失败: ${err instanceof Error ? err.message : 'Network error'}`, variant: 'destructive' });
     }
+  };
+
+  const batchDeleteModels = async () => {
+    if (models.length === 0) {
+      toast({ title: '没有可删除的模型', variant: 'destructive' });
+      return;
+    }
+
+    if (!confirm(`确定要删除所有 ${models.length} 个聊天模型吗？此操作不可恢复！`)) return;
+
+    setSaving(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const model of models) {
+      try {
+        const res = await fetch(`/api/chat/models?id=${model.id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          successCount++;
+        } else {
+          console.error('Delete failed:', model.id, data);
+          failCount++;
+        }
+      } catch (err) {
+        console.error('Delete error:', model.id, err);
+        failCount++;
+      }
+    }
+
+    setSaving(false);
+
+    if (failCount === 0) {
+      toast({ title: `成功删除 ${successCount} 个模型` });
+    } else {
+      toast({
+        title: `删除完成：${successCount} 成功，${failCount} 失败`,
+        variant: failCount > successCount ? 'destructive' : undefined,
+      });
+    }
+
+    loadModels();
   };
 
   const toggleEnabled = async (model: ChatModel) => {
@@ -137,9 +184,22 @@ export default function ModelsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-light text-foreground">聊天模型</h1>
-        <p className="text-foreground/50 mt-1">配置 OpenAI 兼容的聊天模型</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-light text-foreground">聊天模型</h1>
+          <p className="text-foreground/50 mt-1">配置 OpenAI 兼容的聊天模型</p>
+        </div>
+        {models.length > 0 && (
+          <button
+            onClick={batchDeleteModels}
+            disabled={saving}
+            className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl font-medium hover:opacity-90 disabled:opacity-50"
+            title="Batch delete all chat models"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            批量删除
+          </button>
+        )}
       </div>
 
       {/* Form */}

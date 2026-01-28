@@ -305,12 +305,60 @@ export default function VideoChannelsPage() {
     if (!confirm('确定删除该模型？')) return;
     try {
       const res = await fetch(`/api/admin/video-models?id=${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('删除失败');
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: `删除失败: ${data.error || 'Unknown error'}`, variant: 'destructive' });
+        return;
+      }
       toast({ title: '模型已删除' });
       loadData();
-    } catch {
-      toast({ title: '删除失败', variant: 'destructive' });
+    } catch (err) {
+      console.error('Delete model error:', err);
+      toast({ title: `删除失败: ${err instanceof Error ? err.message : 'Network error'}`, variant: 'destructive' });
     }
+  };
+
+  const batchDeleteModels = async (channelId: string) => {
+    const channelModels = models.filter(m => m.channelId === channelId);
+    if (channelModels.length === 0) {
+      toast({ title: '该渠道没有模型', variant: 'destructive' });
+      return;
+    }
+
+    if (!confirm(`确定要删除该渠道的所有 ${channelModels.length} 个模型吗？此操作不可恢复！`)) return;
+
+    setSaving(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const model of channelModels) {
+      try {
+        const res = await fetch(`/api/admin/video-models?id=${model.id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          successCount++;
+        } else {
+          console.error('Delete failed:', model.id, data);
+          failCount++;
+        }
+      } catch (err) {
+        console.error('Delete error:', model.id, err);
+        failCount++;
+      }
+    }
+
+    setSaving(false);
+
+    if (failCount === 0) {
+      toast({ title: `成功删除 ${successCount} 个模型` });
+    } else {
+      toast({
+        title: `删除完成：${successCount} 成功，${failCount} 失败`,
+        variant: failCount > successCount ? 'destructive' : undefined,
+      });
+    }
+
+    loadData();
   };
 
   const toggleModelEnabled = async (model: VideoModel) => {
@@ -343,7 +391,138 @@ export default function VideoChannelsPage() {
     return d?.cost || 0;
   };
 
-  // Batch import Veo video models
+  // Batch import from remote /v1/models endpoint
+  const batchImportFromRemote = async (channelId: string) => {
+    try {
+      // Fetch remote models
+      const fetchRes = await fetch(`/api/admin/video-channels/models?channelId=${channelId}`);
+      if (!fetchRes.ok) {
+        const error = await fetchRes.json();
+        toast({ title: `获取远程模型失败: ${error.error}`, variant: 'destructive' });
+        return;
+      }
+
+      const { data: remoteModels, total } = await fetchRes.json();
+      
+      if (!remoteModels || remoteModels.length === 0) {
+        toast({ title: '未找到可导入的视频模型', variant: 'destructive' });
+        return;
+      }
+
+      if (!confirm(`从远程获取到 ${total} 个视频模型，确定要批量导入吗？`)) return;
+
+      setBatchImporting(true);
+      setBatchImportProgress({ current: 0, total });
+      setBatchImportResults({ success: [], failed: [] });
+
+      const results = { success: [] as string[], failed: [] as Array<{ name: string; error: string }> };
+
+      for (let i = 0; i < remoteModels.length; i++) {
+        const remote = remoteModels[i];
+        setBatchImportProgress({ current: i + 1, total });
+
+        const modelId = remote.id;
+        
+        // Parse model type from ID
+        let modelType = 't2v'; // default
+        let typeLabel = '文生视频';
+        if (modelId.includes('_i2v_')) {
+          modelType = 'i2v';
+          typeLabel = '图生视频';
+        } else if (modelId.includes('_r2v_')) {
+          modelType = 'r2v';
+          typeLabel = '多图生成';
+        }
+        
+        // Parse aspect ratio from ID
+        const isPortrait = modelId.includes('_portrait');
+        const aspectRatioValue = isPortrait ? 'portrait' : 'landscape';
+        const aspectRatioLabel = isPortrait ? '9:16 竖屏' : '16:9 横屏';
+        
+        // Parse version and quality from ID
+        let version = '';
+        let quality = '';
+        if (modelId.includes('_3_1_')) version = 'Veo 3.1';
+        else if (modelId.includes('_2_1_')) version = 'Veo 2.1';
+        else if (modelId.includes('_2_0_')) version = 'Veo 2.0';
+        
+        if (modelId.includes('_ultra_relaxed')) quality = ' Ultra Relaxed [免费]';
+        else if (modelId.includes('_ultra')) quality = ' Ultra';
+        else if (modelId.includes('_fast')) quality = ' Fast';
+        
+        // Generate display name
+        const displayName = `${version} ${typeLabel}${quality} (${aspectRatioLabel})`;
+
+        // Determine features based on model type
+        const features = {
+          textToVideo: true,
+          imageToVideo: modelType === 'i2v' || modelType === 'r2v',
+          videoToVideo: false,
+          supportStyles: false,
+        };
+        
+        // Determine if it's a highlight model
+        const isHighlight = modelId.includes('_3_1_') && 
+                           (modelId.includes('_fast') || modelId.includes('_ultra')) &&
+                           !modelId.includes('_relaxed');
+
+        try {
+          const res = await fetch('/api/admin/video-models', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              channelId,
+              name: displayName,
+              apiModel: modelId,
+              description: remote.description || `${displayName} - ${modelType.toUpperCase()}`,
+              features,
+              aspectRatios: [{ value: aspectRatioValue, label: aspectRatioLabel }],
+              durations: [{ value: '8s', label: '8 秒', cost: 100 }],
+              defaultAspectRatio: aspectRatioValue,
+              defaultDuration: '8s',
+              enabled: true,
+              highlight: isHighlight,
+              sortOrder: i * 10,
+            }),
+          });
+
+          if (res.ok) {
+            results.success.push(displayName);
+          } else {
+            const data = await res.json();
+            results.failed.push({ name: displayName, error: data.error || 'Unknown error' });
+          }
+        } catch (err) {
+          results.failed.push({
+            name: displayName,
+            error: err instanceof Error ? err.message : 'Network error',
+          });
+        }
+      }
+
+      setBatchImportResults(results);
+      setBatchImporting(false);
+
+      if (results.failed.length === 0) {
+        toast({ title: `成功导入 ${results.success.length} 个模型` });
+      } else {
+        toast({
+          title: `导入完成：${results.success.length} 成功，${results.failed.length} 失败`,
+          variant: 'destructive',
+        });
+      }
+
+      loadData();
+    } catch (err) {
+      setBatchImporting(false);
+      toast({
+        title: `批量导入失败: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'destructive',
+      });
+    }
+  };
+
+  // Batch import Veo video models from local config
   const batchImportVeoVideoModels = async (channelId: string) => {
     if (!confirm(`确定要批量导入 ${VEO_VIDEO_MODELS.length} 个 Veo 视频模型吗？`)) return;
     
@@ -833,14 +1012,26 @@ export default function VideoChannelsPage() {
                         <Plus className="w-4 h-4" />
                       </button>
                       {channel.type === 'flow' && (
-                        <button
-                          onClick={() => batchImportVeoVideoModels(channel.id)}
-                          disabled={batchImporting}
-                          className="p-2 text-foreground/40 hover:text-purple-400 hover:bg-purple-500/10 rounded-lg"
-                          title="Batch import Veo video models"
-                        >
-                          {batchImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                        </button>
+                        <>
+                          <button
+                            onClick={() => batchImportFromRemote(channel.id)}
+                            disabled={batchImporting}
+                            className="p-2 text-foreground/40 hover:text-purple-400 hover:bg-purple-500/10 rounded-lg"
+                            title="Fetch and import models from remote /v1/models endpoint"
+                          >
+                            {batchImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                          </button>
+                          {channelModels.length > 0 && (
+                            <button
+                              onClick={() => batchDeleteModels(channel.id)}
+                              disabled={saving}
+                              className="p-2 text-foreground/40 hover:text-red-400 hover:bg-red-500/10 rounded-lg"
+                              title="Batch delete all models in this channel"
+                            >
+                              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                            </button>
+                          )}
+                        </>
                       )}
                       <button onClick={() => startEditChannel(channel)} className="p-2 text-foreground/40 hover:text-foreground hover:bg-card/70 rounded-lg">
                         <Edit2 className="w-4 h-4" />

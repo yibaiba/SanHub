@@ -21,6 +21,8 @@ interface UseNodeOperationsReturn {
   insertCharacterMention: (nodeId: string, mention: string) => void;
   handleStartConnect: (nodeId: string, connectingFrom: string | null, setConnectingFrom: (id: string | null) => void, setCursorPos: (pos: null) => void) => void;
   handleFinishConnect: (nodeId: string, connectingFrom: string | null, setConnectingFrom: (id: string | null) => void) => void;
+  duplicateNode: (nodeId: string) => void;
+  explodeStoryboard: (chatNodeId: string, storyboardData: any) => void;
 }
 
 export function useNodeOperations({
@@ -30,7 +32,7 @@ export function useNodeOperations({
   setNodesDirty,
   setEdgesDirty,
 }: UseNodeOperationsOptions): UseNodeOperationsReturn {
-  
+
   const createNode = useCallback(
     (type: WorkspaceNodeType, position: { x: number; y: number }): WorkspaceNode => {
       const id = crypto.randomUUID();
@@ -275,6 +277,96 @@ export function useNodeOperations({
     [nodes, edges, setEdgesDirty]
   );
 
+  const duplicateNode = useCallback(
+    (nodeId: string) => {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+
+      const newNode = {
+        ...node,
+        id: crypto.randomUUID(),
+        position: {
+          x: node.position.x + 50,
+          y: node.position.y + 50,
+        },
+        name: `${node.name} (副本)`,
+        data: {
+          ...node.data,
+          status: 'idle' as const, // Reset status
+          generationId: undefined,
+          outputUrl: undefined,
+          chatOutput: undefined,
+          templateOutput: undefined,
+          errorMessage: undefined,
+        },
+      };
+
+      setNodesDirty((prev) => [...prev, newNode]);
+      toast({ title: '节点已克隆' });
+    },
+    [nodes, setNodesDirty]
+  );
+
+  const explodeStoryboard = useCallback(
+    (chatNodeId: string, storyboardData: any) => {
+      if (!storyboardData?.scenes || !Array.isArray(storyboardData.scenes)) {
+        toast({ title: '无效的分镜数据格式' });
+        return;
+      }
+
+      const chatNode = nodes.find((n) => n.id === chatNodeId);
+      if (!chatNode) return;
+
+      const newNodes: WorkspaceNode[] = [];
+      const newEdges: WorkspaceEdge[] = [];
+
+      const startX = chatNode.position.x + 400;
+      const startY = chatNode.position.y;
+
+      storyboardData.scenes.forEach((scene: any, index: number) => {
+        const imageId = crypto.randomUUID();
+        const videoId = crypto.randomUUID();
+        const yOffset = index * 520; // Enough space for vertical stack
+
+        // Image Node
+        const imageNode: WorkspaceNode = createNode('image', { x: startX, y: startY + yOffset });
+        imageNode.id = imageId;
+        const frameRoleLabel = scene.frame_role === 'storyboard_only' ? '分镜板' :
+                               scene.frame_role === 'first_frame' ? '首帧' :
+                               scene.frame_role === 'last_frame' ? '尾帧' : '关键帧';
+        imageNode.name = `分镜 ${scene.id || index + 1} - ${frameRoleLabel}`;
+        imageNode.data.prompt = scene.visual_prompt || '';
+        imageNode.data.aspectRatio = scene.aspect_ratio || '16:9';
+
+        newNodes.push(imageNode);
+
+        // Video Node - only if not storyboard_only
+        if (scene.frame_role !== 'storyboard_only') {
+          const videoNode: WorkspaceNode = createNode('video', { x: startX + 400, y: startY + yOffset });
+          videoNode.id = videoId;
+          videoNode.name = `分镜 ${scene.id || index + 1} - 视频`;
+          videoNode.data.prompt = scene.video_prompt || '';
+          videoNode.data.duration = scene.duration || '5s';
+          videoNode.data.aspectRatio = scene.aspect_ratio || '16:9';
+
+          newNodes.push(videoNode);
+
+          // Link Image -> Video (Image-to-Video)
+          newEdges.push({
+            id: `${imageId}-${videoId}`,
+            from: imageId,
+            to: videoId
+          });
+        }
+      });
+
+      setNodesDirty((prev) => [...prev, ...newNodes]);
+      setEdgesDirty((prev) => [...prev, ...newEdges]);
+      toast({ title: `已生成 ${storyboardData.scenes.length} 组分镜节点` });
+    },
+    [nodes, createNode, setNodesDirty, setEdgesDirty]
+  );
+
   return {
     createNode,
     addNodeAt,
@@ -285,5 +377,7 @@ export function useNodeOperations({
     insertCharacterMention,
     handleStartConnect,
     handleFinishConnect,
+    duplicateNode,
+    explodeStoryboard,
   };
 }

@@ -89,7 +89,7 @@ export function ReferenceImageUploader({
         return;
       }
 
-      const response = await fetch(`/api/media/${generation.id}`, {
+      const response = await fetch(`/api/media/${generation.id}?raw=true`, {
         cache: 'force-cache', // Use browser cache if available
       });
       if (!response.ok) {

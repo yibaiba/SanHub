@@ -173,6 +173,18 @@ CREATE TABLE IF NOT EXISTS workspaces (
   INDEX idx_updated_at (updated_at),
   INDEX idx_name (name)
 );
+
+-- shared workflows table
+CREATE TABLE IF NOT EXISTS shared_workflows (
+  id VARCHAR(36) PRIMARY KEY,
+  workspace_id VARCHAR(36) NOT NULL,
+  template_data LONGTEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT,
+  access_count INT DEFAULT 0,
+  INDEX idx_workspace_id (workspace_id),
+  INDEX idx_created_at (created_at)
+);
 `;
 
 let initialized = false;

@@ -517,6 +517,33 @@ export interface PromptTemplate {
 
 export const PROMPT_TEMPLATES: PromptTemplate[] = [
   {
+    id: '3x3-cinematic-shots',
+    name: '3x3电影镜头图',
+    description: '九宫格电影镜头语言参考',
+    content: `Create a 3x3 grid layout of cinematic film shots showing different camera angles and shot types for a specific scene:
+
+Row 1 (Wide/Establishing):
+- Extreme Long Shot (ELS): Establishing location
+- Long Shot (LS): Full character in environment
+- Full Shot (FS): Character head to toe
+
+Row 2 (Medium):
+- Medium Long Shot (MLS): Knees up
+- Medium Shot (MS): Waist up
+- Medium Close-Up (MCU): Chest up
+
+Row 3 (Close/Detail):
+- Close-Up (CU): Head and shoulders
+- Extreme Close-Up (ECU): Eye/Mouth detail
+- Insert Shot: Important object/prop detail
+
+Requirements:
+- Consistent lighting and color grading (Teal & Orange or Noir style)
+- Professional cinematography composition
+- High quality photorealistic render
+- Aspect ratio 1:1 for the grid`,
+  },
+  {
     id: 'character-sheet-3view',
     name: '三视图角色设定表',
     description: '角色前/侧/后三视图 + 脸部特写',
@@ -612,6 +639,34 @@ Requirements:
 - Consistent character design
 - Clean background for easy reference`,
   },
+  {
+    id: 'storyboard-director',
+    name: 'AI 导演分镜表',
+    description: '生成结构化的影视分镜脚本 (JSON格式)',
+    content: `You are a professional film director and storyboard artist.
+Please convert the user's story or description into a structured storyboard list.
+
+Output MUST be a valid JSON object with the following structure:
+{
+  "scenes": [
+    {
+      "id": 1,
+      "visual_prompt": "Detailed image generation prompt for the scene (English)",
+      "video_prompt": "Motion description for video generation (English)",
+      "duration": "5s",
+      "aspect_ratio": "16:9",
+      "shot_type": "wide_shot | medium_shot | close_up | extreme_close_up",
+      "frame_role": "keyframe | first_frame | last_frame | storyboard_only"
+    }
+  ]
+}
+
+Ensure visual_prompts are highly descriptive for AI image generators.
+Ensure video_prompts focus on camera movement and subject action.
+Use "frame_role": "storyboard_only" if the shot is static or just a visual reference.
+Use "frame_role": "keyframe" or "first_frame" if it should be animated into a video.
+Do not output anything else except the JSON.`,
+  },
 ];
 
 export interface WorkspaceNode {
@@ -641,7 +696,8 @@ export interface WorkspaceNode {
     chatMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
     chatOutput?: string; // The generated text output
     inputImages?: string[]; // URLs of input images from connected nodes
-    
+    pureMode?: boolean; // If true, output only the prompt without conversational filler
+
     // Prompt template node fields
     templateId?: string;
     templateOutput?: string; // The selected template content
