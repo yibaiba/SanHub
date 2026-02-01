@@ -507,6 +507,92 @@ export interface StatsOverview {
 
 export type WorkspaceNodeType = 'image' | 'video' | 'chat' | 'prompt-template';
 
+// Storyboard types for AI Director mode
+export type StoryboardFrameRole = 'keyframe' | 'first_frame' | 'last_frame' | 'storyboard_only';
+export type StoryboardFrameMode = 'first_frame' | 'first_last' | 'keyframes';
+
+// Camera movement presets for video generation
+export type CameraMovement =
+  | 'static'      // 静止
+  | 'push_in'     // 推进
+  | 'pull_out'    // 拉远
+  | 'pan_left'    // 左摇
+  | 'pan_right'   // 右摇
+  | 'tilt_up'     // 上仰
+  | 'tilt_down'   // 下俯
+  | 'tracking'    // 跟踪
+  | 'dolly'       // 推轨
+  | 'zoom_in'     // 放大
+  | 'zoom_out'    // 缩小
+  | 'handheld';   // 手持
+
+// Camera movement preset definitions
+export const CAMERA_MOVEMENT_PRESETS: { value: CameraMovement; label: string; prompt: string }[] = [
+  { value: 'static', label: '静止', prompt: 'static camera, fixed shot' },
+  { value: 'push_in', label: '推进', prompt: 'camera slowly pushes in, moving forward' },
+  { value: 'pull_out', label: '拉远', prompt: 'camera pulls back, revealing more of the scene' },
+  { value: 'pan_left', label: '左摇', prompt: 'camera pans left smoothly' },
+  { value: 'pan_right', label: '右摇', prompt: 'camera pans right smoothly' },
+  { value: 'tilt_up', label: '上仰', prompt: 'camera tilts upward' },
+  { value: 'tilt_down', label: '下俯', prompt: 'camera tilts downward' },
+  { value: 'tracking', label: '跟踪', prompt: 'camera tracks the subject, following movement' },
+  { value: 'dolly', label: '推轨', prompt: 'smooth dolly shot, lateral movement' },
+  { value: 'zoom_in', label: '放大', prompt: 'slow zoom in on subject' },
+  { value: 'zoom_out', label: '缩小', prompt: 'slow zoom out from subject' },
+  { value: 'handheld', label: '手持', prompt: 'handheld camera, slight natural shake' },
+];
+
+// Character definition for consistency across scenes
+export interface StoryboardCharacter {
+  name: string;           // Character identifier (e.g., "Moon Man")
+  description: string;    // Visual description for prompts
+  alias?: string[];       // Alternative names/references
+}
+
+// Location definition for consistency across scenes
+export interface StoryboardLocation {
+  name: string;           // Location identifier (e.g., "Outer Space")
+  description: string;    // Visual description for prompts
+}
+
+export interface StoryboardScene {
+  id: number;
+  visual_prompt: string;      // Image generation prompt
+  video_prompt: string;       // Video generation prompt (motion description)
+  duration: string;           // Duration e.g. "5s"
+  aspect_ratio: string;       // Aspect ratio e.g. "16:9"
+  shot_type: string;          // Shot type: wide_shot, medium_shot, close_up, etc.
+  frame_role: StoryboardFrameRole;
+  camera_movement?: CameraMovement;  // Camera movement preset
+  // Enhanced metadata fields
+  characters?: string[];      // Characters in the scene
+  location?: string;          // Scene location
+  dialogue?: string;          // Dialogue content
+  mood?: string;              // Emotional atmosphere
+  transition?: string;        // Transition type to next scene
+  // UI state
+  selected?: boolean;         // Whether selected for generation
+  editing?: boolean;          // Whether currently being edited
+  // Thumbnail preview
+  thumbnailUrl?: string;      // Generated thumbnail image URL
+  thumbnailLoading?: boolean; // Whether thumbnail is being generated
+}
+
+export interface StoryboardData {
+  title?: string;             // Project title
+  frame_mode: StoryboardFrameMode;  // AI recommended frame mode
+  scenes: StoryboardScene[];
+  // Character & Scene consistency (方案一)
+  characters?: StoryboardCharacter[];  // Character definitions
+  locations?: StoryboardLocation[];    // Location definitions
+  style_prefix?: string;               // Global style prefix for all prompts
+  metadata?: {
+    total_duration: string;
+    style: string;
+    genre: string;
+  };
+}
+
 // Prompt template definitions
 export interface PromptTemplate {
   id: string;
@@ -646,26 +732,47 @@ Requirements:
     content: `You are a professional film director and storyboard artist.
 Please convert the user's story or description into a structured storyboard list.
 
+IMPORTANT: Analyze the content and recommend the best frame_mode:
+- "first_frame": Only generate first frame for each scene (fast, good for prototyping)
+- "first_last": Generate first and last frame (good for transitions and motion control)
+- "keyframes": Generate multiple keyframes based on scene complexity (best quality, slower)
+
 Output MUST be a valid JSON object with the following structure:
 {
+  "title": "Project title based on content",
+  "frame_mode": "first_frame | first_last | keyframes",
+  "metadata": {
+    "total_duration": "estimated total duration",
+    "style": "visual style description",
+    "genre": "content genre"
+  },
   "scenes": [
     {
       "id": 1,
-      "visual_prompt": "Detailed image generation prompt for the scene (English)",
-      "video_prompt": "Motion description for video generation (English)",
+      "visual_prompt": "Detailed image generation prompt for the scene (English, highly descriptive for AI image generators)",
+      "video_prompt": "Motion description focusing on camera movement and subject action (English)",
       "duration": "5s",
       "aspect_ratio": "16:9",
-      "shot_type": "wide_shot | medium_shot | close_up | extreme_close_up",
-      "frame_role": "keyframe | first_frame | last_frame | storyboard_only"
+      "shot_type": "wide_shot | medium_shot | close_up | extreme_close_up | over_shoulder | pov",
+      "frame_role": "keyframe | first_frame | last_frame | storyboard_only",
+      "characters": ["list of character names appearing in this scene"],
+      "location": "scene location description",
+      "dialogue": "any dialogue in this scene (optional)",
+      "mood": "emotional atmosphere (e.g., tense, joyful, melancholic)",
+      "transition": "transition to next scene (cut, fade, dissolve, wipe)"
     }
   ]
 }
 
-Ensure visual_prompts are highly descriptive for AI image generators.
-Ensure video_prompts focus on camera movement and subject action.
-Use "frame_role": "storyboard_only" if the shot is static or just a visual reference.
-Use "frame_role": "keyframe" or "first_frame" if it should be animated into a video.
-Do not output anything else except the JSON.`,
+Guidelines:
+- visual_prompt should be highly descriptive, including lighting, color palette, composition
+- video_prompt should focus on motion and camera work
+- Use "frame_role": "storyboard_only" for static reference shots
+- Use "frame_role": "first_frame" for scenes that will be animated
+- Use "frame_role": "last_frame" for ending frames when frame_mode is "first_last"
+- characters array helps track consistency across scenes
+- location helps maintain scene continuity
+- Do not output anything else except the JSON.`,
   },
 ];
 
@@ -679,7 +786,8 @@ export interface WorkspaceNode {
     prompt: string;
     status?: 'idle' | 'pending' | 'processing' | 'completed' | 'failed';
     errorMessage?: string;
-    
+    progress?: number; // 0-100 execution progress
+
     // Image/Video node fields
     modelId?: string;
     aspectRatio?: string;
@@ -690,13 +798,21 @@ export interface WorkspaceNode {
     generationId?: string;
     revisedPrompt?: string;
     uploadedImages?: string[]; // User uploaded reference images (base64 or URLs)
-    
+
     // Chat node fields
     chatModelId?: string;
     chatMessages?: Array<{ role: 'user' | 'assistant'; content: string }>;
     chatOutput?: string; // The generated text output
     inputImages?: string[]; // URLs of input images from connected nodes
     pureMode?: boolean; // If true, output only the prompt without conversational filler
+
+    // Storyboard mode fields (Chat node enhancement)
+    storyboardMode?: boolean; // Enable AI storyboard director mode
+    storyboardStep?: 'collecting' | 'preview' | 'confirmed'; // Current step in storyboard workflow
+    storyboardData?: StoryboardData; // Parsed storyboard data from AI
+    selectedScenes?: number[]; // Scene IDs selected for generation
+    generatedNodeIds?: string[]; // IDs of nodes generated from storyboard explosion
+    sceneNodeMapping?: Array<{ sceneId: number; imageNodeId?: string; videoNodeId?: string }>; // Scene to node mapping
 
     // Prompt template node fields
     templateId?: string;

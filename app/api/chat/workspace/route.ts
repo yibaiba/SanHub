@@ -3,11 +3,43 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getChatModel, getUserById, updateUserBalance } from '@/lib/db';
 import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
+import type { StoryboardData } from '@/types';
 
 // Validation constants
 const CHAT_MAX_LENGTH = 2000;
 const MAX_IMAGES = 10;
 const MAX_IMAGE_URL_LENGTH = 100000; // ~100KB for base64 data URLs
+const MAX_HISTORY_MESSAGES = 20; // Max conversation history
+
+// Try to parse storyboard JSON from AI response
+function tryParseStoryboard(text: string): StoryboardData | null {
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const json = JSON.parse(jsonMatch[0]);
+    if (json.scenes && Array.isArray(json.scenes)) {
+      // Ensure all scenes have selected: true by default
+      json.scenes = json.scenes.map((scene: Record<string, unknown>, idx: number) => ({
+        ...scene,
+        id: scene.id ?? idx + 1,
+        selected: true,
+      }));
+      // Set default frame_mode if not provided
+      if (!json.frame_mode) {
+        json.frame_mode = 'first_frame';
+      }
+      return json as StoryboardData;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,10 +57,19 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { modelId, prompt, images } = body as {
+    const {
+      modelId,
+      prompt,
+      images,
+      // New fields for multi-turn conversation
+      history,
+      systemPrompt,
+    } = body as {
       modelId: string;
       prompt: string;
       images?: string[];
+      history?: ChatMessage[];
+      systemPrompt?: string;
     };
 
     // Validate required fields
@@ -78,6 +119,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Validate history array
+    if (history !== undefined) {
+      if (!Array.isArray(history)) {
+        return NextResponse.json(
+          { success: false, error: '对话历史格式错误' },
+          { status: 400 }
+        );
+      }
+      if (history.length > MAX_HISTORY_MESSAGES) {
+        return NextResponse.json(
+          { success: false, error: `对话历史不能超过 ${MAX_HISTORY_MESSAGES} 条` },
+          { status: 400 }
+        );
+      }
+    }
+
     const model = await getChatModel(modelId);
     if (!model || !model.enabled) {
       return NextResponse.json(
@@ -105,20 +162,35 @@ export async function POST(request: NextRequest) {
 
     // Build messages for the API call
     const messages: Array<{ role: string; content: unknown }> = [];
-    
+
+    // Add system prompt if provided
+    if (systemPrompt && typeof systemPrompt === 'string') {
+      messages.push({ role: 'system', content: systemPrompt });
+    }
+
+    // Add conversation history
+    if (history && Array.isArray(history)) {
+      for (const msg of history) {
+        if (msg.role && msg.content) {
+          messages.push({ role: msg.role, content: msg.content });
+        }
+      }
+    }
+
+    // Add current user message
     if (images && images.length > 0 && model.supportsVision) {
       // Vision model with images
       const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
         { type: 'text', text: prompt },
       ];
-      
+
       for (const imageUrl of images) {
         content.push({
           type: 'image_url',
           image_url: { url: imageUrl },
         });
       }
-      
+
       messages.push({ role: 'user', content });
     } else {
       // Text-only message
@@ -150,11 +222,15 @@ export async function POST(request: NextRequest) {
     // Deduct balance
     await updateUserBalance(session.user.id, -model.costPerMessage, 'strict');
 
+    // Try to parse storyboard data from response
+    const storyboardData = tryParseStoryboard(assistantContent);
+
     return NextResponse.json({
       success: true,
       data: {
         content: assistantContent,
         cost: model.costPerMessage,
+        storyboardData, // Will be null if not a valid storyboard JSON
       },
     });
   } catch (error) {

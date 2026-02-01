@@ -12,10 +12,12 @@ import {
   getSystemConfig,
   refundGenerationBalance,
   getVideoModelWithChannel,
+  getGeneration,
 } from '@/lib/db';
 import type { Generation, GenerationType, SoraGenerateRequest } from '@/types';
 import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
 import { fetchExternalBuffer } from '@/lib/safe-fetch';
+import { readMediaFile, isLocalFile } from '@/lib/media-storage';
 
 // 配置路由段选项
 export const maxDuration = 60;
@@ -67,7 +69,40 @@ async function generateWithRateLimitRetry(
 }
 
 async function fetchImageAsBase64(imageUrl: string, origin: string): Promise<{ mimeType: string; data: string }> {
-  const { buffer, contentType } = await fetchExternalBuffer(imageUrl, {
+  let actualUrl = imageUrl;
+
+  // Check if this is an internal /api/media/ URL - fetch directly from database
+  const internalMediaMatch = imageUrl.match(/\/api\/media\/([a-f0-9-]+)/i);
+  if (internalMediaMatch) {
+    const generationId = internalMediaMatch[1];
+    console.log(`[fetchImageAsBase64] Detected internal media URL, fetching generation ${generationId} from DB`);
+
+    const generation = await getGeneration(generationId);
+    if (!generation?.resultUrl) {
+      throw new Error(`Generation ${generationId} not found or has no result URL`);
+    }
+
+    actualUrl = generation.resultUrl;
+    console.log(`[fetchImageAsBase64] Resolved to actual URL: ${actualUrl.substring(0, 80)}...`);
+  }
+
+  // Handle local file storage (file:xxx.jpg format)
+  if (isLocalFile(actualUrl)) {
+    console.log(`[fetchImageAsBase64] Reading local file: ${actualUrl}`);
+    const result = await readMediaFile(actualUrl);
+    if (!result) {
+      throw new Error(`Failed to read local file: ${actualUrl}`);
+    }
+    const { buffer, mimeType } = result;
+    if (!mimeType.startsWith('image/')) {
+      throw new Error('Unsupported reference image content type');
+    }
+    const data = buffer.toString('base64');
+    return { mimeType, data };
+  }
+
+  // Handle external URLs
+  const { buffer, contentType } = await fetchExternalBuffer(actualUrl, {
     origin,
     allowRelative: true,
     maxBytes: MAX_REFERENCE_IMAGE_BYTES,

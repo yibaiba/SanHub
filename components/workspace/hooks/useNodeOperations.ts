@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { toast } from '@/components/ui/toaster';
 import { IMAGE_MODELS, VIDEO_MODELS, getImageModelById } from '@/lib/model-config';
-import type { WorkspaceNode, WorkspaceEdge, WorkspaceNodeType, ChatModel } from '@/types';
+import type { WorkspaceNode, WorkspaceEdge, WorkspaceNodeType, ChatModel, StoryboardData, StoryboardScene } from '@/types';
 
 interface UseNodeOperationsOptions {
   nodes: WorkspaceNode[];
@@ -22,7 +22,7 @@ interface UseNodeOperationsReturn {
   handleStartConnect: (nodeId: string, connectingFrom: string | null, setConnectingFrom: (id: string | null) => void, setCursorPos: (pos: null) => void) => void;
   handleFinishConnect: (nodeId: string, connectingFrom: string | null, setConnectingFrom: (id: string | null) => void) => void;
   duplicateNode: (nodeId: string) => void;
-  explodeStoryboard: (chatNodeId: string, storyboardData: any) => void;
+  explodeStoryboard: (chatNodeId: string, storyboardData: StoryboardData) => string[] | undefined;
 }
 
 export function useNodeOperations({
@@ -308,9 +308,21 @@ export function useNodeOperations({
   );
 
   const explodeStoryboard = useCallback(
-    (chatNodeId: string, storyboardData: any) => {
+    (chatNodeId: string, storyboardData: StoryboardData) => {
+      console.log('[explodeStoryboard] Input data:', JSON.stringify(storyboardData, null, 2));
+
       if (!storyboardData?.scenes || !Array.isArray(storyboardData.scenes)) {
         toast({ title: '无效的分镜数据格式' });
+        return;
+      }
+
+      // Filter only selected scenes
+      const selectedScenes = storyboardData.scenes.filter(
+        (scene: StoryboardScene) => scene.selected !== false
+      );
+
+      if (selectedScenes.length === 0) {
+        toast({ title: '请至少选择一个分镜' });
         return;
       }
 
@@ -322,32 +334,60 @@ export function useNodeOperations({
 
       const startX = chatNode.position.x + 400;
       const startY = chatNode.position.y;
+      const frameMode = storyboardData.frame_mode || 'first_frame';
 
-      storyboardData.scenes.forEach((scene: any, index: number) => {
+      selectedScenes.forEach((scene: StoryboardScene, index: number) => {
         const imageId = crypto.randomUUID();
         const videoId = crypto.randomUUID();
         const yOffset = index * 520; // Enough space for vertical stack
 
-        // Image Node
-        const imageNode: WorkspaceNode = createNode('image', { x: startX, y: startY + yOffset });
-        imageNode.id = imageId;
+        // Build node name with metadata
         const frameRoleLabel = scene.frame_role === 'storyboard_only' ? '分镜板' :
                                scene.frame_role === 'first_frame' ? '首帧' :
                                scene.frame_role === 'last_frame' ? '尾帧' : '关键帧';
-        imageNode.name = `分镜 ${scene.id || index + 1} - ${frameRoleLabel}`;
-        imageNode.data.prompt = scene.visual_prompt || '';
-        imageNode.data.aspectRatio = scene.aspect_ratio || '16:9';
+
+        // Include characters and location in name if available
+        let nodeName = `分镜 ${scene.id || index + 1} - ${frameRoleLabel}`;
+        if (scene.characters && scene.characters.length > 0) {
+          nodeName += ` [${scene.characters.slice(0, 2).join(', ')}]`;
+        }
+        if (scene.location) {
+          nodeName += ` @ ${scene.location.slice(0, 15)}`;
+        }
+
+        // Image Node - create with all properties at once
+        const baseImageNode = createNode('image', { x: startX, y: startY + yOffset });
+        const imageNode: WorkspaceNode = {
+          ...baseImageNode,
+          id: imageId,
+          name: nodeName,
+          data: {
+            ...baseImageNode.data,
+            prompt: scene.visual_prompt || '',
+            aspectRatio: scene.aspect_ratio || '16:9',
+          },
+        };
+
+        console.log('[explodeStoryboard] Scene', scene.id, '- visual_prompt:', scene.visual_prompt);
+        console.log('[explodeStoryboard] Scene', scene.id, '- video_prompt:', scene.video_prompt);
+        console.log('[explodeStoryboard] Image node prompt set to:', imageNode.data.prompt);
 
         newNodes.push(imageNode);
 
         // Video Node - only if not storyboard_only
         if (scene.frame_role !== 'storyboard_only') {
-          const videoNode: WorkspaceNode = createNode('video', { x: startX + 400, y: startY + yOffset });
-          videoNode.id = videoId;
-          videoNode.name = `分镜 ${scene.id || index + 1} - 视频`;
-          videoNode.data.prompt = scene.video_prompt || '';
-          videoNode.data.duration = scene.duration || '5s';
-          videoNode.data.aspectRatio = scene.aspect_ratio || '16:9';
+          const baseVideoNode = createNode('video', { x: startX + 400, y: startY + yOffset });
+          const videoNode: WorkspaceNode = {
+            ...baseVideoNode,
+            id: videoId,
+            name: `分镜 ${scene.id || index + 1} - 视频`,
+            data: {
+              ...baseVideoNode.data,
+              prompt: scene.video_prompt || '',
+              duration: scene.duration || '5s',
+              aspectRatio: scene.aspect_ratio || '16:9',
+            },
+          };
 
           newNodes.push(videoNode);
 
@@ -360,9 +400,42 @@ export function useNodeOperations({
         }
       });
 
-      setNodesDirty((prev) => [...prev, ...newNodes]);
+      // Build scene-to-node mapping for progress tracking
+      const sceneNodeMapping = selectedScenes.map((scene: StoryboardScene, index: number) => {
+        const imageNode = newNodes.find(n => n.type === 'image' && n.name?.includes(`分镜 ${scene.id}`));
+        const videoNode = newNodes.find(n => n.type === 'video' && n.name?.includes(`分镜 ${scene.id}`));
+        return {
+          sceneId: scene.id,
+          imageNodeId: imageNode?.id,
+          videoNodeId: videoNode?.id,
+        };
+      });
+
+      // Update chat node to mark storyboard as confirmed and store generated node IDs
+      setNodesDirty((prev) => [
+        ...prev.map((node) =>
+          node.id === chatNodeId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  storyboardStep: 'confirmed' as const,
+                  generatedNodeIds: newNodes.map(n => n.id),
+                  sceneNodeMapping,
+                }
+              }
+            : node
+        ),
+        ...newNodes
+      ]);
       setEdgesDirty((prev) => [...prev, ...newEdges]);
-      toast({ title: `已生成 ${storyboardData.scenes.length} 组分镜节点` });
+
+      const modeLabel = frameMode === 'first_frame' ? '首帧' :
+                        frameMode === 'first_last' ? '首尾帧' : '关键帧';
+      toast({ title: `已生成 ${selectedScenes.length} 组分镜节点 (${modeLabel}模式)` });
+
+      // Return image node IDs for batch execution
+      return newNodes.filter(n => n.type === 'image').map(n => n.id);
     },
     [nodes, createNode, setNodesDirty, setEdgesDirty]
   );

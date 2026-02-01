@@ -15,18 +15,21 @@ import {
 import { useWorkflowEngine } from '@/components/workspace/hooks/useWorkflowEngine';
 import {
   Check,
+  CheckCircle2,
   ChevronDown,
   Download,
   Link2,
   Loader2,
   MousePointer2,
   Plus,
+  RefreshCw,
   Video,
   Maximize2,
   RotateCcw,
   Save,
   Trash2,
   Wand2,
+  XCircle,
   ZoomIn,
   ZoomOut,
   MessageSquare,
@@ -46,7 +49,9 @@ import {
 } from 'lucide-react';
 import { toast } from '@/components/ui/toaster';
 import { cn } from '@/lib/utils';
-import type { CharacterCard, WorkspaceData, WorkspaceEdge, WorkspaceNode, WorkspaceNodeType, ChatModel, SafeImageModel, SafeVideoModel } from '@/types';
+import type { CharacterCard, WorkspaceData, WorkspaceEdge, WorkspaceNode, WorkspaceNodeType, ChatModel, SafeImageModel, SafeVideoModel, StoryboardData, StoryboardScene, CameraMovement, PROMPT_TEMPLATES } from '@/types';
+import { CAMERA_MOVEMENT_PRESETS } from '@/types';
+import { StoryboardPreview } from '@/components/workspace/StoryboardPreview';
 
 interface PromptTemplate {
   id: string;
@@ -97,16 +102,76 @@ function getImageResolution(
 }
 
 // 尝试解析分镜 JSON
-function tryParseStoryboard(text: string) {
+function tryParseStoryboard(text: string): StoryboardData | null {
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
     const json = JSON.parse(jsonMatch[0]);
-    if (json.scenes && Array.isArray(json.scenes)) return json;
+    if (json.scenes && Array.isArray(json.scenes)) {
+      // Ensure all scenes have selected: true by default
+      json.scenes = json.scenes.map((scene: Record<string, unknown>, idx: number) => ({
+        ...scene,
+        id: scene.id ?? idx + 1,
+        selected: true,
+      }));
+      // Set default frame_mode if not provided
+      if (!json.frame_mode) {
+        json.frame_mode = 'first_frame';
+      }
+      return json as StoryboardData;
+    }
     return null;
-  } catch (e) {
+  } catch {
     return null;
   }
+}
+
+// Get storyboard director system prompt
+function getStoryboardSystemPrompt(): string {
+  return `You are a professional film director and storyboard artist.
+Please convert the user's story or description into a structured storyboard list.
+
+IMPORTANT: Analyze the content and recommend the best frame_mode:
+- "first_frame": Only generate first frame for each scene (fast, good for prototyping)
+- "first_last": Generate first and last frame (good for transitions and motion control)
+- "keyframes": Generate multiple keyframes based on scene complexity (best quality, slower)
+
+Output MUST be a valid JSON object with the following structure:
+{
+  "title": "Project title based on content",
+  "frame_mode": "first_frame | first_last | keyframes",
+  "metadata": {
+    "total_duration": "estimated total duration",
+    "style": "visual style description",
+    "genre": "content genre"
+  },
+  "scenes": [
+    {
+      "id": 1,
+      "visual_prompt": "Detailed image generation prompt for the scene (English, highly descriptive for AI image generators)",
+      "video_prompt": "Motion description focusing on camera movement and subject action (English)",
+      "duration": "5s",
+      "aspect_ratio": "16:9",
+      "shot_type": "wide_shot | medium_shot | close_up | extreme_close_up | over_shoulder | pov",
+      "frame_role": "keyframe | first_frame | last_frame | storyboard_only",
+      "characters": ["list of character names appearing in this scene"],
+      "location": "scene location description",
+      "dialogue": "any dialogue in this scene (optional)",
+      "mood": "emotional atmosphere (e.g., tense, joyful, melancholic)",
+      "transition": "transition to next scene (cut, fade, dissolve, wipe)"
+    }
+  ]
+}
+
+Guidelines:
+- visual_prompt should be highly descriptive, including lighting, color palette, composition
+- video_prompt should focus on motion and camera work
+- Use "frame_role": "storyboard_only" for static reference shots
+- Use "frame_role": "first_frame" for scenes that will be animated
+- Use "frame_role": "last_frame" for ending frames when frame_mode is "first_last"
+- characters array helps track consistency across scenes
+- location helps maintain scene continuity
+- Do not output anything else except the JSON.`;
 }
 
 const CHAT_MAX_LENGTH = 2000;
@@ -774,7 +839,7 @@ export default function WorkspaceEditorPage() {
     );
   }, [setNodesDirty]);
 
-  const { runWorkflow, stopWorkflow, isExecuting } = useWorkflowEngine({
+  const { runWorkflow, stopWorkflow, runBatchNodes, retryAllFailed, isExecuting, hasFailedNodes, failedNodeIds } = useWorkflowEngine({
     workspaceId,
     nodes,
     edges,
@@ -791,6 +856,434 @@ export default function WorkspaceEditorPage() {
   const removeNode = (id: string) => {
     setNodesDirty((prev) => prev.filter((node) => node.id !== id));
     setEdgesDirty((prev) => prev.filter((edge) => edge.from !== id && edge.to !== id));
+  };
+
+  const duplicateNode = (id: string) => {
+    const sourceNode = nodes.find((n) => n.id === id);
+    if (!sourceNode) return;
+
+    const newId = crypto.randomUUID();
+    const newNode: WorkspaceNode = {
+      ...sourceNode,
+      id: newId,
+      name: `${sourceNode.name} (copy)`,
+      position: {
+        x: sourceNode.position.x + 50,
+        y: sourceNode.position.y + 50,
+      },
+      data: {
+        ...sourceNode.data,
+        status: 'idle',
+        outputUrl: undefined,
+        outputType: undefined,
+        chatOutput: undefined,
+        templateOutput: undefined,
+        errorMessage: undefined,
+        progress: undefined,
+      },
+    };
+    setNodesDirty((prev) => [...prev, newNode]);
+  };
+
+  // Explode storyboard scenes into image -> video node pairs
+  const explodeStoryboard = (chatNodeId: string, storyboardData: StoryboardData) => {
+    console.log('[explodeStoryboard] Input data:', JSON.stringify(storyboardData, null, 2));
+
+    if (!storyboardData?.scenes || !Array.isArray(storyboardData.scenes)) {
+      toast({ title: '无效的分镜数据格式' });
+      return;
+    }
+
+    // Filter only selected scenes
+    const selectedScenes = storyboardData.scenes.filter(
+      (scene) => scene.selected !== false
+    );
+
+    if (selectedScenes.length === 0) {
+      toast({ title: '请至少选择一个分镜' });
+      return;
+    }
+
+    const chatNode = nodes.find((n) => n.id === chatNodeId);
+    if (!chatNode) return;
+
+    const newNodes: WorkspaceNode[] = [];
+    const newEdges: WorkspaceEdge[] = [];
+
+    const startX = chatNode.position.x + 450;
+    const startY = chatNode.position.y;
+    const frameMode = storyboardData.frame_mode || 'first_frame';
+
+    // Calculate layout based on aspect ratio
+    // Portrait (9:16) nodes are taller, need more vertical space
+    const baseAspectRatio = storyboardData.scenes[0]?.aspect_ratio || '16:9';
+    const isPortrait = baseAspectRatio.includes('9:16') || baseAspectRatio === '9:16';
+
+    // Vertical spacing: 720px for portrait, 580px for landscape
+    const verticalSpacing = isPortrait ? 720 : 580;
+    // Horizontal spacing between image and video nodes
+    const horizontalSpacing = 420;
+
+    // Smart model selection based on aspect ratio
+    // Find image model that supports the aspect ratio
+    const targetImageModel = imageModels.find(m =>
+      m.aspectRatios.includes(baseAspectRatio) ||
+      (isPortrait && m.aspectRatios.includes('9:16')) ||
+      (!isPortrait && m.aspectRatios.includes('16:9'))
+    ) || imageModels[0];
+
+    // Find video model that supports image-to-video and matching aspect ratio
+    const targetVideoModel = videoModels.find(m => {
+      const supportsI2V = m.features.imageToVideo;
+      const matchesRatio = m.aspectRatios.some(r =>
+        (isPortrait && r.value === 'portrait') ||
+        (!isPortrait && r.value === 'landscape')
+      );
+      return supportsI2V && matchesRatio;
+    }) || videoModels.find(m => m.features.imageToVideo) || videoModels[0];
+
+    console.log('[explodeStoryboard] Selected image model:', targetImageModel?.id, targetImageModel?.name);
+    console.log('[explodeStoryboard] Selected video model:', targetVideoModel?.id, targetVideoModel?.name, 'I2V:', targetVideoModel?.features.imageToVideo);
+
+    // Helper to generate short scene description from visual_prompt
+    const getShortDescription = (scene: StoryboardScene): string => {
+      // Try dialogue first (most descriptive)
+      if (scene.dialogue) {
+        return scene.dialogue.slice(0, 20) + (scene.dialogue.length > 20 ? '...' : '');
+      }
+      // Try extracting key action from visual_prompt
+      const prompt = scene.visual_prompt || '';
+      // Get first meaningful phrase (before comma or period)
+      const firstPhrase = prompt.split(/[,，.。]/)[0].trim();
+      if (firstPhrase.length > 0 && firstPhrase.length <= 30) {
+        return firstPhrase;
+      }
+      // Fallback to first N characters
+      if (prompt.length > 25) {
+        return prompt.slice(0, 25) + '...';
+      }
+      return prompt || '未命名场景';
+    };
+
+    // Helper to assemble full prompt with consistency settings (方案三)
+    // Format: [style_prefix], [character descriptions], [location description], [camera movement], [original prompt]
+    const assemblePrompt = (
+      originalPrompt: string,
+      sceneCharacters?: string[],
+      sceneLocation?: string,
+      cameraMovement?: CameraMovement
+    ): string => {
+      const parts: string[] = [];
+
+      // 1. Add style prefix
+      if (storyboardData.style_prefix) {
+        parts.push(storyboardData.style_prefix);
+      }
+
+      // 2. Add character descriptions (if any match the scene's characters)
+      if (sceneCharacters && sceneCharacters.length > 0 && storyboardData.characters) {
+        const charDescriptions = sceneCharacters
+          .map(charName => {
+            const charDef = storyboardData.characters?.find(c =>
+              c.name === charName || c.alias?.includes(charName)
+            );
+            if (charDef?.description) {
+              return `${charName}: ${charDef.description}`;
+            }
+            return null;
+          })
+          .filter(Boolean);
+
+        if (charDescriptions.length > 0) {
+          parts.push(charDescriptions.join(', '));
+        }
+      }
+
+      // 3. Add location description (if matches scene's location)
+      if (sceneLocation && storyboardData.locations) {
+        const locDef = storyboardData.locations.find(l => l.name === sceneLocation);
+        if (locDef?.description) {
+          parts.push(`Setting: ${locDef.description}`);
+        }
+      }
+
+      // 4. Add camera movement (for video prompts)
+      if (cameraMovement) {
+        const movementPreset = CAMERA_MOVEMENT_PRESETS.find(p => p.value === cameraMovement);
+        if (movementPreset) {
+          parts.push(movementPreset.prompt);
+        }
+      }
+
+      // 5. Add original prompt
+      if (originalPrompt) {
+        parts.push(originalPrompt);
+      }
+
+      return parts.join(', ');
+    };
+
+    // Helper to assemble video prompt with camera movement
+    const assembleVideoPrompt = (
+      originalPrompt: string,
+      sceneCharacters?: string[],
+      sceneLocation?: string,
+      cameraMovement?: CameraMovement
+    ): string => {
+      return assemblePrompt(originalPrompt, sceneCharacters, sceneLocation, cameraMovement);
+    };
+
+    // Helper to create image node
+    const createImageNode = (
+      scene: StoryboardScene,
+      sceneIndex: number,
+      position: { x: number; y: number },
+      frameLabel: string
+    ): WorkspaceNode => {
+      const sceneNum = scene.id || sceneIndex + 1;
+      const shortDesc = getShortDescription(scene);
+      const nodeName = `${sceneNum}. ${shortDesc} (${frameLabel})`;
+
+      // Assemble full prompt with consistency settings
+      const fullPrompt = assemblePrompt(
+        scene.visual_prompt || '',
+        scene.characters,
+        scene.location
+      );
+
+      return {
+        id: crypto.randomUUID(),
+        type: 'image',
+        name: nodeName,
+        position,
+        data: {
+          prompt: fullPrompt,
+          status: 'idle',
+          modelId: targetImageModel?.id,
+          aspectRatio: scene.aspect_ratio || targetImageModel?.defaultAspectRatio || '16:9',
+        },
+      };
+    };
+
+    // Helper to create video node
+    const createVideoNode = (
+      sceneId: number,
+      videoPrompt: string,
+      duration: string,
+      position: { x: number; y: number },
+      description?: string,
+      sceneCharacters?: string[],
+      sceneLocation?: string,
+      cameraMovement?: CameraMovement
+    ): WorkspaceNode => {
+      const nodeName = description
+        ? `${sceneId}. ${description} (视频)`
+        : `分镜 ${sceneId} - 视频`;
+
+      // Assemble full prompt with consistency settings and camera movement
+      const fullPrompt = assembleVideoPrompt(videoPrompt, sceneCharacters, sceneLocation, cameraMovement);
+
+      return {
+        id: crypto.randomUUID(),
+        type: 'video',
+        name: nodeName,
+        position,
+        data: {
+          prompt: fullPrompt,
+          status: 'idle',
+          modelId: targetVideoModel?.id,
+          aspectRatio: isPortrait ? 'portrait' : 'landscape',
+          duration: duration || targetVideoModel?.defaultDuration || '8s',
+        },
+      };
+    };
+
+    // Create story overview title node (using prompt-template type as info card)
+    const storyTitle = storyboardData.title || '未命名故事';
+    const totalDuration = storyboardData.metadata?.total_duration || `${selectedScenes.length * 8}s`;
+    const style = storyboardData.metadata?.style || '';
+    const genre = storyboardData.metadata?.genre || '';
+    const modeLabel = frameMode === 'first_frame' ? '首帧模式' :
+                      frameMode === 'first_last' ? '首尾帧模式' : '关键帧模式';
+
+    const overviewContent = [
+      `🎬 ${storyTitle}`,
+      `━━━━━━━━━━━━━━━━━━━━`,
+      `📊 ${selectedScenes.length} 个分镜 | ${modeLabel}`,
+      `⏱️ 预计时长: ${totalDuration}`,
+      style ? `🎨 风格: ${style}` : '',
+      genre ? `📁 类型: ${genre}` : '',
+      `━━━━━━━━━━━━━━━━━━━━`,
+      `分镜概览:`,
+      ...selectedScenes.slice(0, 6).map((s, i) =>
+        `  ${i + 1}. ${getShortDescription(s)}`
+      ),
+      selectedScenes.length > 6 ? `  ... 还有 ${selectedScenes.length - 6} 个分镜` : '',
+    ].filter(Boolean).join('\n');
+
+    const overviewNode: WorkspaceNode = {
+      id: crypto.randomUUID(),
+      type: 'prompt-template',
+      name: `🎬 ${storyTitle}`,
+      position: {
+        x: startX - 50,
+        y: startY - 180,
+      },
+      data: {
+        prompt: overviewContent,
+        templateOutput: overviewContent,
+        status: 'completed',
+      },
+    };
+    newNodes.push(overviewNode);
+
+    // Different layout strategies based on frame mode
+    if (frameMode === 'first_last') {
+      // First-Last Frame Mode: pair scenes, two images connect to one video
+      // Layout:
+      //   首帧图片 ──┐
+      //              ├──→ 视频节点
+      //   尾帧图片 ──┘
+      const pairSpacing = isPortrait ? 800 : 650; // Space between pairs
+      const imageVerticalGap = isPortrait ? 380 : 280; // Gap between first and last frame images
+
+      for (let i = 0; i < selectedScenes.length; i += 2) {
+        const firstScene = selectedScenes[i];
+        const lastScene = selectedScenes[i + 1];
+        const pairIndex = Math.floor(i / 2);
+        const yOffset = pairIndex * pairSpacing;
+
+        // First frame image (top)
+        const firstImageNode = createImageNode(
+          firstScene,
+          i,
+          { x: startX, y: startY + yOffset },
+          '首帧'
+        );
+        newNodes.push(firstImageNode);
+        console.log('[explodeStoryboard] First frame:', firstScene.id, firstScene.visual_prompt);
+
+        if (lastScene) {
+          // Last frame image (bottom, below first frame)
+          const lastImageNode = createImageNode(
+            lastScene,
+            i + 1,
+            { x: startX, y: startY + yOffset + imageVerticalGap },
+            '尾帧'
+          );
+          newNodes.push(lastImageNode);
+          console.log('[explodeStoryboard] Last frame:', lastScene.id, lastScene.visual_prompt);
+
+          // Video node (centered between the two images, to the right)
+          const firstDesc = getShortDescription(firstScene);
+          const videoNode = createVideoNode(
+            firstScene.id || pairIndex + 1,
+            firstScene.video_prompt || lastScene.video_prompt || '',
+            firstScene.duration || lastScene.duration || '8s',
+            { x: startX + horizontalSpacing, y: startY + yOffset + imageVerticalGap / 2 },
+            firstDesc,
+            firstScene.characters || lastScene.characters,
+            firstScene.location || lastScene.location,
+            firstScene.camera_movement || lastScene.camera_movement
+          );
+          newNodes.push(videoNode);
+
+          // Connect both images to the video
+          newEdges.push({
+            id: `${firstImageNode.id}-${videoNode.id}`,
+            from: firstImageNode.id,
+            to: videoNode.id,
+          });
+          newEdges.push({
+            id: `${lastImageNode.id}-${videoNode.id}`,
+            from: lastImageNode.id,
+            to: videoNode.id,
+          });
+        } else {
+          // Odd number of scenes: last one is just first frame with video
+          if (firstScene.frame_role !== 'storyboard_only') {
+            const firstDesc = getShortDescription(firstScene);
+            const videoNode = createVideoNode(
+              firstScene.id || pairIndex + 1,
+              firstScene.video_prompt || '',
+              firstScene.duration || '8s',
+              { x: startX + horizontalSpacing, y: startY + yOffset },
+              firstDesc,
+              firstScene.characters,
+              firstScene.location,
+              firstScene.camera_movement
+            );
+            newNodes.push(videoNode);
+
+            newEdges.push({
+              id: `${firstImageNode.id}-${videoNode.id}`,
+              from: firstImageNode.id,
+              to: videoNode.id,
+            });
+          }
+        }
+      }
+    } else {
+      // first_frame or keyframes mode: each scene gets one image + one video
+      selectedScenes.forEach((scene, index) => {
+        const yOffset = index * verticalSpacing;
+
+        const frameLabel = scene.frame_role === 'storyboard_only' ? '分镜板' :
+                           scene.frame_role === 'first_frame' ? '首帧' :
+                           scene.frame_role === 'last_frame' ? '尾帧' : '关键帧';
+
+        // Create image node
+        const imageNode = createImageNode(
+          scene,
+          index,
+          { x: startX, y: startY + yOffset },
+          frameLabel
+        );
+        newNodes.push(imageNode);
+        console.log('[explodeStoryboard] Scene', scene.id, '- visual_prompt:', scene.visual_prompt);
+
+        // Video Node - only if not storyboard_only
+        if (scene.frame_role !== 'storyboard_only') {
+          const sceneDesc = getShortDescription(scene);
+          const videoNode = createVideoNode(
+            scene.id || index + 1,
+            scene.video_prompt || '',
+            scene.duration || '8s',
+            { x: startX + horizontalSpacing, y: startY + yOffset },
+            sceneDesc,
+            scene.characters,
+            scene.location,
+            scene.camera_movement
+          );
+          newNodes.push(videoNode);
+
+          // Link Image -> Video
+          newEdges.push({
+            id: `${imageNode.id}-${videoNode.id}`,
+            from: imageNode.id,
+            to: videoNode.id,
+          });
+        }
+      });
+    }
+
+    // Update chat node to mark storyboard as confirmed and add new nodes
+    setNodesDirty((prev) => [
+      ...prev.map((node) =>
+        node.id === chatNodeId
+          ? { ...node, data: { ...node.data, storyboardStep: 'confirmed' as const } }
+          : node
+      ),
+      ...newNodes
+    ]);
+    setEdgesDirty((prev) => [...prev, ...newEdges]);
+
+    const toastModeLabel = frameMode === 'first_frame' ? '首帧' :
+                      frameMode === 'first_last' ? '首尾帧' : '关键帧';
+    toast({ title: `已生成 ${selectedScenes.length} 组分镜节点 (${toastModeLabel}模式)` });
+
+    // Return created image node IDs for batch execution
+    return newNodes.filter(n => n.type === 'image').map(n => n.id);
   };
 
   const removeEdge = (edgeId: string) => {
@@ -1116,19 +1609,35 @@ export default function WorkspaceEditorPage() {
     updateNodeData(node.id, { status: 'pending', errorMessage: undefined, inputImages });
 
     try {
+      // Build request body with optional storyboard mode support
+      const requestBody: Record<string, unknown> = {
+        modelId: node.data.chatModelId,
+        prompt,
+        images: inputImages,
+      };
+
+      // If storyboard mode is enabled, add system prompt and conversation history
+      if (node.data.storyboardMode) {
+        requestBody.systemPrompt = getStoryboardSystemPrompt();
+        // Include previous messages for multi-turn conversation
+        if (node.data.chatMessages && node.data.chatMessages.length > 0) {
+          requestBody.history = node.data.chatMessages;
+        }
+      }
+
       const res = await fetch('/api/chat/workspace', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          modelId: node.data.chatModelId,
-          prompt,
-          images: inputImages,
-        }),
+        body: JSON.stringify(requestBody),
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || '聊天失败');
       }
+
+      // Check if response contains storyboard data
+      const storyboardData = data.data.storyboardData || tryParseStoryboard(data.data.content);
+
       updateNodeData(node.id, {
         status: 'completed',
         chatOutput: data.data.content,
@@ -1138,8 +1647,13 @@ export default function WorkspaceEditorPage() {
           { role: 'assistant', content: data.data.content },
         ],
         errorMessage: undefined,
+        // Update storyboard data if in storyboard mode and valid data received
+        ...(node.data.storyboardMode && storyboardData ? {
+          storyboardData,
+          storyboardStep: 'preview' as const,
+        } : {}),
       });
-      toast({ title: '聊天完成' });
+      toast({ title: node.data.storyboardMode && storyboardData ? '分镜规划完成' : '聊天完成' });
     } catch (error) {
       updateNodeData(node.id, {
         status: 'failed',
@@ -1307,6 +1821,17 @@ export default function WorkspaceEditorPage() {
             >
               <Square className="w-4 h-4 fill-current" />
               停止
+            </button>
+          )}
+          {/* Retry failed nodes button */}
+          {hasFailedNodes && !isExecuting && (
+            <button
+              onClick={retryAllFailed}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-orange-500/10 text-orange-500 font-medium hover:bg-orange-500/20 transition shrink-0"
+              title={`重试 ${failedNodeIds.length} 个失败节点`}
+            >
+              <RotateCcw className="w-4 h-4" />
+              重试失败 ({failedNodeIds.length})
             </button>
           )}
           <button
@@ -1671,7 +2196,19 @@ export default function WorkspaceEditorPage() {
                             <label className="text-[10px] uppercase tracking-wider text-foreground/40">提示词</label>
                             <div className="flex items-center gap-2">
                               <button
-                                onClick={() => updateNodeData(node.id, { pureMode: !node.data.pureMode })}
+                                onClick={() => updateNodeData(node.id, { storyboardMode: !node.data.storyboardMode, pureMode: false })}
+                                className={cn(
+                                  "flex items-center gap-1 text-[10px] transition-colors",
+                                  node.data.storyboardMode ? "text-blue-400" : "text-foreground/30 hover:text-foreground/50"
+                                )}
+                                title="分镜模式：开启后使用分镜导演系统提示词，生成结构化分镜数据"
+                              >
+                                {node.data.storyboardMode ? <ToggleRight className="w-3 h-3" /> : <ToggleLeft className="w-3 h-3" />}
+                                <Film className="w-3 h-3" />
+                                分镜
+                              </button>
+                              <button
+                                onClick={() => updateNodeData(node.id, { pureMode: !node.data.pureMode, storyboardMode: false })}
                                 className={cn(
                                   "flex items-center gap-1 text-[10px] transition-colors",
                                   node.data.pureMode ? "text-green-400" : "text-foreground/30 hover:text-foreground/50"
@@ -1679,7 +2216,7 @@ export default function WorkspaceEditorPage() {
                                 title="纯净模式：开启后仅输出提示词内容，不包含对话废话"
                               >
                                 {node.data.pureMode ? <ToggleRight className="w-3 h-3" /> : <ToggleLeft className="w-3 h-3" />}
-                                纯净模式
+                                纯净
                               </button>
                               <span className="text-[10px] text-foreground/30">{node.data.prompt.length}/{CHAT_MAX_LENGTH}</span>
                             </div>
@@ -1725,28 +2262,174 @@ export default function WorkspaceEditorPage() {
                         </button>
 
                         {node.data.chatOutput && (
-                          <div className="space-y-1">
+                          <div className="space-y-2">
                             <div className="flex items-center justify-between">
                               <label className="text-[10px] uppercase tracking-wider text-foreground/40">输出</label>
-                              {(() => {
-                                const storyboard = tryParseStoryboard(node.data.chatOutput);
-                                if (storyboard) {
-                                  return (
-                                    <button
-                                      onClick={() => explodeStoryboard(node.id, storyboard)}
-                                      className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[10px] hover:bg-blue-500/20 transition"
-                                    >
-                                      <Film className="w-3 h-3" />
-                                      生成 {storyboard.scenes.length} 组分镜
-                                    </button>
-                                  );
-                                }
-                                return null;
-                              })()}
                             </div>
-                            <div className="text-[10px] text-foreground/60 bg-card/60 rounded-lg px-2 py-1.5 max-h-40 overflow-auto whitespace-pre-wrap">
-                              {node.data.chatOutput}
-                            </div>
+                            {/* Storyboard Preview Mode */}
+                            {(() => {
+                              const storyboardData = node.data.storyboardData || tryParseStoryboard(node.data.chatOutput);
+                              if (storyboardData && node.data.storyboardStep !== 'confirmed') {
+                                return (
+                                  <StoryboardPreview
+                                    data={storyboardData}
+                                    onUpdateData={(updatedData) => updateNodeData(node.id, {
+                                      storyboardData: updatedData,
+                                      storyboardStep: 'preview' as const
+                                    })}
+                                    onConfirm={(finalData) => {
+                                      explodeStoryboard(node.id, finalData);
+                                    }}
+                                    onConfirmAndExecute={(finalData) => {
+                                      const imageNodeIds = explodeStoryboard(node.id, finalData);
+                                      if (imageNodeIds && imageNodeIds.length > 0) {
+                                        // Schedule execution after state updates
+                                        setTimeout(() => {
+                                          runBatchNodes(imageNodeIds, true);
+                                        }, 100);
+                                      }
+                                    }}
+                                    onCancel={() => updateNodeData(node.id, {
+                                      storyboardData: undefined,
+                                      storyboardStep: undefined
+                                    })}
+                                  />
+                                );
+                              }
+                              // Confirmed storyboard - show formatted summary with progress
+                              if (node.data.storyboardStep === 'confirmed' && node.data.storyboardData) {
+                                const sb = node.data.storyboardData;
+                                const mapping = node.data.sceneNodeMapping || [];
+
+                                // Calculate progress from generated nodes
+                                const getNodeStatus = (nodeId?: string) => {
+                                  if (!nodeId) return 'idle';
+                                  const n = nodes.find(nd => nd.id === nodeId);
+                                  return n?.data?.status || 'idle';
+                                };
+
+                                const progressItems = mapping.map(m => ({
+                                  sceneId: m.sceneId,
+                                  imageStatus: getNodeStatus(m.imageNodeId),
+                                  videoStatus: getNodeStatus(m.videoNodeId),
+                                }));
+
+                                const completedCount = progressItems.filter(
+                                  p => p.imageStatus === 'completed' && (p.videoStatus === 'completed' || p.videoStatus === 'idle')
+                                ).length;
+                                const failedCount = progressItems.filter(
+                                  p => p.imageStatus === 'failed' || p.videoStatus === 'failed'
+                                ).length;
+                                const processingCount = progressItems.filter(
+                                  p => p.imageStatus === 'pending' || p.imageStatus === 'processing' ||
+                                       p.videoStatus === 'pending' || p.videoStatus === 'processing'
+                                ).length;
+                                const totalCount = progressItems.length;
+
+                                return (
+                                  <div className="space-y-2">
+                                    {/* Summary header */}
+                                    <div className="text-[10px] text-foreground/60 bg-green-500/10 border border-green-500/30 rounded-lg px-2 py-1.5">
+                                      <div className="font-medium text-green-400">✅ 分镜已生成</div>
+                                      <div className="text-foreground/50">
+                                        🎬 {sb.title || '未命名故事'} • 📊 {sb.scenes?.length || 0} 个分镜
+                                      </div>
+                                    </div>
+
+                                    {/* Progress panel */}
+                                    {mapping.length > 0 && (
+                                      <div className="border border-cyan-500/30 rounded-lg p-2 bg-cyan-500/5 space-y-2">
+                                        <div className="flex items-center justify-between text-[10px]">
+                                          <span className="text-cyan-400 uppercase tracking-wider flex items-center gap-1">
+                                            <Film className="w-3 h-3" />
+                                            生成进度
+                                          </span>
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-green-400">{completedCount}/{totalCount}</span>
+                                            {failedCount > 0 && <span className="text-red-400">{failedCount} 失败</span>}
+                                            {processingCount > 0 && (
+                                              <span className="text-cyan-400 flex items-center gap-1">
+                                                <Loader2 className="w-3 h-3 animate-spin" />
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        {/* Progress bar */}
+                                        <div className="h-1.5 bg-card/60 rounded-full overflow-hidden flex">
+                                          <div className="bg-green-500 transition-all" style={{ width: `${(completedCount / totalCount) * 100}%` }} />
+                                          <div className="bg-cyan-500 animate-pulse transition-all" style={{ width: `${(processingCount / totalCount) * 100}%` }} />
+                                          <div className="bg-red-500 transition-all" style={{ width: `${(failedCount / totalCount) * 100}%` }} />
+                                        </div>
+
+                                        {/* Per-scene mini status */}
+                                        <div className="flex flex-wrap gap-1">
+                                          {progressItems.map((p) => {
+                                            const hasFail = p.imageStatus === 'failed' || p.videoStatus === 'failed';
+                                            const isComplete = p.imageStatus === 'completed' && (p.videoStatus === 'completed' || p.videoStatus === 'idle');
+                                            const isProcessing = p.imageStatus === 'processing' || p.videoStatus === 'processing';
+                                            return (
+                                              <div
+                                                key={p.sceneId}
+                                                className={cn(
+                                                  'px-1.5 py-0.5 rounded text-[8px] flex items-center gap-0.5',
+                                                  hasFail ? 'bg-red-500/20 text-red-400' :
+                                                  isComplete ? 'bg-green-500/20 text-green-400' :
+                                                  isProcessing ? 'bg-cyan-500/20 text-cyan-400' :
+                                                  'bg-card/60 text-foreground/40'
+                                                )}
+                                                title={`分镜 ${p.sceneId}: 图像=${p.imageStatus}, 视频=${p.videoStatus}`}
+                                              >
+                                                #{p.sceneId}
+                                                {hasFail && <XCircle className="w-2.5 h-2.5" />}
+                                                {isComplete && <CheckCircle2 className="w-2.5 h-2.5" />}
+                                                {isProcessing && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+
+                                        {/* Retry all failed button */}
+                                        {failedCount > 0 && (
+                                          <button
+                                            onClick={() => {
+                                              const failedNodeIds = mapping
+                                                .filter(m => {
+                                                  const imgStatus = getNodeStatus(m.imageNodeId);
+                                                  const vidStatus = getNodeStatus(m.videoNodeId);
+                                                  return imgStatus === 'failed' || vidStatus === 'failed';
+                                                })
+                                                .flatMap(m => [m.imageNodeId, m.videoNodeId].filter(Boolean) as string[]);
+                                              if (failedNodeIds.length > 0) {
+                                                runBatchNodes(failedNodeIds, true);
+                                              }
+                                            }}
+                                            className="w-full py-1 text-[9px] bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 flex items-center justify-center gap-1"
+                                          >
+                                            <RefreshCw className="w-3 h-3" />
+                                            重试失败项
+                                          </button>
+                                        )}
+
+                                        {/* Completion message */}
+                                        {processingCount === 0 && completedCount === totalCount && (
+                                          <div className="text-[9px] text-center py-1 bg-green-500/20 text-green-400 rounded flex items-center justify-center gap-1">
+                                            <CheckCircle2 className="w-3 h-3" />
+                                            所有分镜生成完成！
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              }
+                              // Regular output view
+                              return (
+                                <div className="text-[10px] text-foreground/60 bg-card/60 rounded-lg px-2 py-1.5 max-h-40 overflow-auto whitespace-pre-wrap">
+                                  {node.data.chatOutput}
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
                       </>
@@ -2179,7 +2862,11 @@ export default function WorkspaceEditorPage() {
                       const newNode = createNode('image', { x: contextMenu.x, y: contextMenu.y });
                       setNodesDirty((prev) => [...prev, newNode]);
                       if (contextMenu.sourceNodeId) {
-                        handleFinishConnect(newNode.id, contextMenu.sourceNodeId, setConnectingFrom);
+                        setConnectingFrom(contextMenu.sourceNodeId);
+                        // Use setTimeout to allow state to update before calling handleFinishConnect
+                        setTimeout(() => {
+                          handleFinishConnect(newNode.id);
+                        }, 0);
                       }
                       setContextMenu(null);
                     }}
@@ -2193,7 +2880,10 @@ export default function WorkspaceEditorPage() {
                       const newNode = createNode('video', { x: contextMenu.x, y: contextMenu.y });
                       setNodesDirty((prev) => [...prev, newNode]);
                       if (contextMenu.sourceNodeId) {
-                        handleFinishConnect(newNode.id, contextMenu.sourceNodeId, setConnectingFrom);
+                        setConnectingFrom(contextMenu.sourceNodeId);
+                        setTimeout(() => {
+                          handleFinishConnect(newNode.id);
+                        }, 0);
                       }
                       setContextMenu(null);
                     }}
@@ -2207,7 +2897,10 @@ export default function WorkspaceEditorPage() {
                       const newNode = createNode('chat', { x: contextMenu.x, y: contextMenu.y });
                       setNodesDirty((prev) => [...prev, newNode]);
                       if (contextMenu.sourceNodeId) {
-                        handleFinishConnect(newNode.id, contextMenu.sourceNodeId, setConnectingFrom);
+                        setConnectingFrom(contextMenu.sourceNodeId);
+                        setTimeout(() => {
+                          handleFinishConnect(newNode.id);
+                        }, 0);
                       }
                       setContextMenu(null);
                     }}
@@ -2221,7 +2914,10 @@ export default function WorkspaceEditorPage() {
                       const newNode = createNode('prompt-template', { x: contextMenu.x, y: contextMenu.y });
                       setNodesDirty((prev) => [...prev, newNode]);
                       if (contextMenu.sourceNodeId) {
-                        handleFinishConnect(newNode.id, contextMenu.sourceNodeId, setConnectingFrom);
+                        setConnectingFrom(contextMenu.sourceNodeId);
+                        setTimeout(() => {
+                          handleFinishConnect(newNode.id);
+                        }, 0);
                       }
                       setContextMenu(null);
                     }}

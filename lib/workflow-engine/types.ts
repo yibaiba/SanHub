@@ -17,6 +17,12 @@ export interface ExecutionResult {
   duration: number;
 }
 
+// Execution context passed to node execution functions
+export interface NodeExecutionContext {
+  abortSignal?: AbortSignal;
+  onProgress?: (progress: number, message?: string) => void;
+}
+
 export interface WorkflowExecutionResult {
   workspaceId: string;
   totalNodes: number;
@@ -38,11 +44,13 @@ export interface ValidationError {
 }
 
 export interface NodeExecutionState {
-  status: 'idle' | 'waiting' | 'running' | 'completed' | 'failed';
+  status: 'idle' | 'waiting' | 'running' | 'completed' | 'failed' | 'cancelled';
   startTime?: number;
   endTime?: number;
   output?: any;
   error?: string;
+  progress?: number;         // 0-100 progress percentage
+  progressMessage?: string;  // Human-readable progress status
 }
 
 export interface WorkspaceExecutionState {
@@ -50,6 +58,7 @@ export interface WorkspaceExecutionState {
   isExecuting: boolean;
   nodeStates: Map<string, NodeExecutionState>;
   executionOrder?: string[];
+  abortController?: AbortController;  // For cancellation support
 }
 
 // ========================================

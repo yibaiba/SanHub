@@ -2,7 +2,8 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   ExecutionManager,
   StateManager,
-  NodeExecutionState
+  NodeExecutionState,
+  NodeExecutionContext
 } from '@/lib/workflow-engine';
 import { WorkspaceNode, WorkspaceEdge, SafeImageModel, SafeVideoModel, ChatModel } from '@/types';
 import { executeNodeAPI } from '../lib/node-execution';
@@ -17,6 +18,18 @@ interface UseWorkflowEngineProps {
   updateNodeData: (id: string, data: Partial<WorkspaceNode['data']>) => void;
 }
 
+interface WorkflowEngineReturn {
+  runWorkflow: () => Promise<void>;
+  stopWorkflow: () => Promise<void>;
+  retryNode: (nodeId: string, cascade?: boolean) => Promise<void>;
+  runSingleNode: (nodeId: string, cascade?: boolean) => Promise<void>;
+  runBatchNodes: (nodeIds: string[], cascade?: boolean) => Promise<void>;
+  retryAllFailed: () => Promise<void>;
+  isExecuting: boolean;
+  hasFailedNodes: boolean;
+  failedNodeIds: string[];
+}
+
 export function useWorkflowEngine({
   workspaceId,
   nodes,
@@ -25,10 +38,17 @@ export function useWorkflowEngine({
   videoModels,
   chatModels,
   updateNodeData
-}: UseWorkflowEngineProps) {
+}: UseWorkflowEngineProps): WorkflowEngineReturn {
   const [isExecuting, setIsExecuting] = useState(false);
+  const [failedNodeIds, setFailedNodeIds] = useState<string[]>([]);
   const engineRef = useRef<ExecutionManager | null>(null);
   const stateManagerRef = useRef<StateManager | null>(null);
+
+  // Use refs to always have latest values in callbacks
+  const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
+  nodesRef.current = nodes;
+  edgesRef.current = edges;
 
   // Initialize engine
   useEffect(() => {
@@ -41,51 +61,61 @@ export function useWorkflowEngine({
 
         // Update UI node data
         const updates: Partial<WorkspaceNode['data']> = {
-          status: state.status,
+          status: mapStatusToNodeStatus(state.status),
           errorMessage: state.error
         };
 
+        // Handle progress
+        if (typeof state.progress === 'number') {
+          updates.progress = state.progress;
+        }
+
         if (state.output) {
           if (typeof state.output === 'string' && (state.output.startsWith('http') || state.output.startsWith('data:'))) {
-             updates.outputUrl = state.output;
-             // Try to infer type
-             if (state.output.endsWith('.mp4')) updates.outputType = 'video';
-             else updates.outputType = 'image';
+            updates.outputUrl = state.output;
+            if (state.output.endsWith('.mp4')) updates.outputType = 'video';
+            else updates.outputType = 'image';
           } else if (typeof state.output === 'string') {
-             updates.chatOutput = state.output;
-             updates.templateOutput = state.output;
+            updates.chatOutput = state.output;
+            updates.templateOutput = state.output;
           }
         }
 
         updateNodeData(nodeId, updates);
+
+        // Track failed nodes
+        if (state.status === 'failed') {
+          setFailedNodeIds(prev => prev.includes(nodeId) ? prev : [...prev, nodeId]);
+        } else if (state.status === 'completed' || state.status === 'idle') {
+          setFailedNodeIds(prev => prev.filter(id => id !== nodeId));
+        }
       });
 
       // Attempt to restore state from local storage on mount
       stateManagerRef.current.restoreState(workspaceId);
     }
 
-    // Initialize ExecutionManager
+    // Initialize ExecutionManager with latest data getter
     engineRef.current = new ExecutionManager(
       stateManagerRef.current,
-      async (wsId) => {
-        // Return current nodes/edges state
-        // Note: In a real async scenario, we might fetch from DB to ensure latest.
-        // But here we use the props which are kept in sync by the parent.
-        return { nodes, edges };
+      async () => {
+        return { nodes: nodesRef.current, edges: edgesRef.current };
       },
-      async (node, inputs) => {
+      async (node, inputs, context?: NodeExecutionContext) => {
         return executeNodeAPI(node, inputs, {
           imageModels,
           videoModels,
           chatModels
-        });
-      }
+        }, context);
+      },
+      { maxConcurrency: 3 }
     );
-  }, [workspaceId, nodes, edges, imageModels, videoModels, chatModels, updateNodeData]);
+  }, [workspaceId, imageModels, videoModels, chatModels, updateNodeData]);
 
   const runWorkflow = useCallback(async () => {
     if (!engineRef.current) return;
     setIsExecuting(true);
+    setFailedNodeIds([]);
     try {
       await engineRef.current.executeWorkflow(workspaceId);
     } catch (e) {
@@ -101,9 +131,89 @@ export function useWorkflowEngine({
     setIsExecuting(false);
   }, [workspaceId]);
 
+  const retryNode = useCallback(async (nodeId: string, cascade: boolean = false) => {
+    if (!engineRef.current) return;
+    setIsExecuting(true);
+    try {
+      await engineRef.current.retryNode(workspaceId, nodeId, { cascadeEnabled: cascade });
+    } catch (e) {
+      console.error('Node retry failed', e);
+    } finally {
+      setIsExecuting(false);
+    }
+  }, [workspaceId]);
+
+  const runSingleNode = useCallback(async (nodeId: string, cascade: boolean = false) => {
+    if (!engineRef.current) return;
+    setIsExecuting(true);
+    try {
+      await engineRef.current.executeNodeInWorkspace(workspaceId, nodeId, { cascadeEnabled: cascade });
+    } catch (e) {
+      console.error('Node execution failed', e);
+    } finally {
+      setIsExecuting(false);
+    }
+  }, [workspaceId]);
+
+  // Batch execute multiple nodes (for storyboard batch execution)
+  const runBatchNodes = useCallback(async (nodeIds: string[], cascade: boolean = true) => {
+    if (!engineRef.current || nodeIds.length === 0) return;
+    setIsExecuting(true);
+    setFailedNodeIds([]);
+    try {
+      // Execute nodes sequentially to respect dependencies
+      for (const nodeId of nodeIds) {
+        await engineRef.current.executeNodeInWorkspace(workspaceId, nodeId, { cascadeEnabled: cascade });
+      }
+    } catch (e) {
+      console.error('Batch node execution failed', e);
+    } finally {
+      setIsExecuting(false);
+    }
+  }, [workspaceId]);
+
+  // Retry all failed nodes
+  const retryAllFailed = useCallback(async () => {
+    if (!engineRef.current || failedNodeIds.length === 0) return;
+    setIsExecuting(true);
+    const nodesToRetry = [...failedNodeIds];
+    try {
+      for (const nodeId of nodesToRetry) {
+        await engineRef.current.retryNode(workspaceId, nodeId, { cascadeEnabled: true });
+      }
+    } catch (e) {
+      console.error('Retry all failed nodes failed', e);
+    } finally {
+      setIsExecuting(false);
+    }
+  }, [workspaceId, failedNodeIds]);
+
   return {
     runWorkflow,
     stopWorkflow,
-    isExecuting
+    retryNode,
+    runSingleNode,
+    runBatchNodes,
+    retryAllFailed,
+    isExecuting,
+    hasFailedNodes: failedNodeIds.length > 0,
+    failedNodeIds
   };
+}
+
+// Map engine status to node display status
+function mapStatusToNodeStatus(status: NodeExecutionState['status']): WorkspaceNode['data']['status'] {
+  switch (status) {
+    case 'running':
+      return 'processing';
+    case 'completed':
+      return 'completed';
+    case 'failed':
+    case 'cancelled':
+      return 'failed';
+    case 'idle':
+    case 'waiting':
+    default:
+      return 'idle';
+  }
 }
