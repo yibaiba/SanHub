@@ -23,6 +23,12 @@ interface UseNodeOperationsReturn {
   handleFinishConnect: (nodeId: string, connectingFrom: string | null, setConnectingFrom: (id: string | null) => void) => void;
   duplicateNode: (nodeId: string) => void;
   explodeStoryboard: (chatNodeId: string, storyboardData: StoryboardData) => string[] | undefined;
+  createStoryboardSliceGroups: (params: {
+    slices: Array<{ imageUrl: string; index: number }>;
+    storyContext: string;
+    sourceNodeId: string;
+    sourcePosition: { x: number; y: number };
+  }) => { imageNodeIds: string[]; chatNodeIds: string[]; videoNodeIds: string[] };
 }
 
 export function useNodeOperations({
@@ -440,6 +446,124 @@ export function useNodeOperations({
     [nodes, createNode, setNodesDirty, setEdgesDirty]
   );
 
+  /**
+   * Create node groups for storyboard slices
+   * Each slice creates: Image (with uploaded image) -> Chat (看图生成提示词) -> Video
+   */
+  const createStoryboardSliceGroups = useCallback(
+    (params: {
+      slices: Array<{ imageUrl: string; index: number }>;
+      storyContext: string;
+      sourceNodeId: string;
+      sourcePosition: { x: number; y: number };
+    }) => {
+      const { slices, storyContext, sourcePosition } = params;
+
+      const newNodes: WorkspaceNode[] = [];
+      const newEdges: WorkspaceEdge[] = [];
+      const imageNodeIds: string[] = [];
+      const chatNodeIds: string[] = [];
+      const videoNodeIds: string[] = [];
+
+      // Layout configuration
+      const horizontalGap = 320;  // Gap between node groups
+      const verticalGap = 200;    // Gap between nodes in a group
+      const nodesPerRow = 4;      // Max groups per row
+
+      slices.forEach(({ imageUrl, index }, i) => {
+        const imageId = crypto.randomUUID();
+        const chatId = crypto.randomUUID();
+        const videoId = crypto.randomUUID();
+
+        // Calculate position (grid layout)
+        const row = Math.floor(i / nodesPerRow);
+        const col = i % nodesPerRow;
+        const baseX = sourcePosition.x + 400 + col * horizontalGap;
+        const baseY = sourcePosition.y + row * (verticalGap * 3 + 100);
+
+        // 1. Image Node - with pre-filled uploaded image
+        const baseImageNode = createNode('image', { x: baseX, y: baseY });
+        const imageNode: WorkspaceNode = {
+          ...baseImageNode,
+          id: imageId,
+          name: `切片 ${index + 1} - 图片`,
+          data: {
+            ...baseImageNode.data,
+            uploadedImages: [imageUrl],
+            status: 'completed',
+            outputUrl: imageUrl,
+            prompt: '', // Will be filled by Chat output
+          },
+        };
+        newNodes.push(imageNode);
+        imageNodeIds.push(imageId);
+
+        // 2. Chat Node - configured to analyze image and generate video prompt
+        const baseChatNode = createNode('chat', { x: baseX, y: baseY + verticalGap });
+        const defaultChatModel = chatModels[0]?.id || 'gpt-4o-mini';
+        const chatNode: WorkspaceNode = {
+          ...baseChatNode,
+          id: chatId,
+          name: `切片 ${index + 1} - 提示词生成`,
+          data: {
+            ...baseChatNode.data,
+            chatModelId: defaultChatModel,
+            inputImages: [imageUrl],
+            pureMode: true, // Output pure text without markdown
+            prompt: `请根据这张分镜图片，生成一段用于视频生成的提示词。
+
+故事背景：
+${storyContext}
+
+要求：
+1. 描述画面主体和动作
+2. 描述镜头运动建议（如推进、平移、跟踪等）
+3. 描述氛围和光影
+4. 输出纯文本，不要 JSON 格式`,
+            templateId: 'storyboard-to-video-prompt',
+          },
+        };
+        newNodes.push(chatNode);
+        chatNodeIds.push(chatId);
+
+        // 3. Video Node
+        const baseVideoNode = createNode('video', { x: baseX, y: baseY + verticalGap * 2 });
+        const videoNode: WorkspaceNode = {
+          ...baseVideoNode,
+          id: videoId,
+          name: `切片 ${index + 1} - 视频`,
+          data: {
+            ...baseVideoNode.data,
+            aspectRatio: '16:9',
+            duration: '5s',
+          },
+        };
+        newNodes.push(videoNode);
+        videoNodeIds.push(videoId);
+
+        // Create edges: Image -> Chat -> Video
+        // Also Image -> Video (for reference image)
+        newEdges.push(
+          { id: `${imageId}-${chatId}`, from: imageId, to: chatId },
+          { id: `${chatId}-${videoId}`, from: chatId, to: videoId },
+          { id: `${imageId}-${videoId}`, from: imageId, to: videoId }
+        );
+      });
+
+      // Update state
+      setNodesDirty((prev) => [...prev, ...newNodes]);
+      setEdgesDirty((prev) => [...prev, ...newEdges]);
+
+      toast({
+        title: `已创建 ${slices.length} 组分镜节点`,
+        description: 'Image → Chat → Video 节点组已自动连接',
+      });
+
+      return { imageNodeIds, chatNodeIds, videoNodeIds };
+    },
+    [createNode, chatModels, setNodesDirty, setEdgesDirty]
+  );
+
   return {
     createNode,
     addNodeAt,
@@ -452,5 +576,6 @@ export function useNodeOperations({
     handleFinishConnect,
     duplicateNode,
     explodeStoryboard,
+    createStoryboardSliceGroups,
   };
 }

@@ -33,8 +33,8 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { StoryboardData, StoryboardScene, StoryboardFrameMode, StoryboardCharacter, StoryboardLocation, CameraMovement } from '@/types';
-import { CAMERA_MOVEMENT_PRESETS } from '@/types';
+import type { StoryboardData, StoryboardScene, StoryboardFrameMode, StoryboardCharacter, StoryboardLocation, CameraMovement, StoryboardModeType } from '@/types';
+import { CAMERA_MOVEMENT_PRESETS, VOICE_STYLE_PRESETS } from '@/types';
 import { STORYBOARD_TEMPLATES, applyTemplate, type StoryboardTemplate } from '@/lib/storyboard-templates';
 
 // Style presets for quick selection
@@ -169,7 +169,15 @@ const StoryboardPreviewCard = memo(function StoryboardPreviewCard({
           {frameRoleLabel}
         </span>
 
-        <span className="text-[10px] text-foreground/40">{scene.duration}</span>
+        {/* Time display: precise timeRange for cinematic mode, duration for quick mode */}
+        {scene.timeRange ? (
+          <span className="text-[10px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-400 flex items-center gap-0.5" title="精确时间轴">
+            <Clock className="w-2.5 h-2.5" />
+            {scene.timeRange}
+          </span>
+        ) : (
+          <span className="text-[10px] text-foreground/40">{scene.duration}</span>
+        )}
 
         {/* Camera movement badge */}
         <span className="text-[10px] px-1 py-0.5 rounded bg-cyan-500/20 text-cyan-400 flex items-center gap-0.5">
@@ -450,6 +458,7 @@ export function StoryboardPreview({
   isExecuting = false,
 }: StoryboardPreviewProps) {
   const [frameMode, setFrameMode] = useState<StoryboardFrameMode>(data.frame_mode || 'first_frame');
+  const [storyboardMode, setStoryboardMode] = useState<StoryboardModeType>(data.storyboard_mode || 'quick');
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16'>(
     data.scenes[0]?.aspect_ratio?.includes('9:16') ? '9:16' : '16:9'
   );
@@ -808,6 +817,7 @@ export function StoryboardPreview({
     const finalData: StoryboardData = {
       ...data,
       frame_mode: frameMode,
+      storyboard_mode: storyboardMode,
       // Consistency settings (方案一 + 方案二)
       style_prefix: stylePrefix.trim() || undefined,
       characters: validCharacters.length > 0 ? validCharacters : undefined,
@@ -899,6 +909,42 @@ export function StoryboardPreview({
             <X className="w-4 h-4" />
           </button>
         </div>
+      </div>
+
+      {/* Storyboard Mode Switcher */}
+      <div className="flex items-center gap-2 py-1">
+        <span className="text-[10px] text-foreground/50">模式:</span>
+        <div className="flex items-center gap-1 bg-background/50 rounded-md p-0.5">
+          <button
+            onClick={() => setStoryboardMode('quick')}
+            className={cn(
+              'px-2 py-0.5 text-[10px] rounded transition-colors',
+              storyboardMode === 'quick'
+                ? 'bg-blue-500/20 text-blue-400'
+                : 'text-foreground/50 hover:text-foreground/70'
+            )}
+            title="快速分镜模式"
+          >
+            ⚡ 快速
+          </button>
+          <button
+            onClick={() => setStoryboardMode('cinematic')}
+            className={cn(
+              'px-2 py-0.5 text-[10px] rounded transition-colors',
+              storyboardMode === 'cinematic'
+                ? 'bg-purple-500/20 text-purple-400'
+                : 'text-foreground/50 hover:text-foreground/70'
+            )}
+            title="影视级分镜模式 - 支持精确时间轴和角色配音"
+          >
+            🎬 影视级
+          </button>
+        </div>
+        {storyboardMode === 'cinematic' && (
+          <span className="text-[9px] text-purple-400/70">
+            支持精确时间轴 · 角色配音参考
+          </span>
+        )}
       </div>
 
       {/* Quick Style Selector - Always visible */}
@@ -1048,29 +1094,56 @@ export function StoryboardPreview({
             {characters.length === 0 ? (
               <p className="text-[9px] text-foreground/30 italic">暂无角色定义</p>
             ) : (
-              <div className="space-y-1 max-h-24 overflow-y-auto">
+              <div className="space-y-2 max-h-32 overflow-y-auto">
                 {characters.map((char, idx) => (
-                  <div key={idx} className="flex gap-1 items-start">
-                    <input
-                      type="text"
-                      value={char.name}
-                      onChange={(e) => handleUpdateCharacter(idx, 'name', e.target.value)}
-                      placeholder="角色名"
-                      className="w-20 px-1.5 py-0.5 text-[10px] bg-card/60 border border-border/50 rounded text-foreground focus:outline-none focus:border-purple-500/50"
-                    />
-                    <input
-                      type="text"
-                      value={char.description}
-                      onChange={(e) => handleUpdateCharacter(idx, 'description', e.target.value)}
-                      placeholder="外观描述 (如: tall man with silver hair)"
-                      className="flex-1 px-1.5 py-0.5 text-[10px] bg-card/60 border border-border/50 rounded text-foreground focus:outline-none focus:border-purple-500/50"
-                    />
-                    <button
-                      onClick={() => handleRemoveCharacter(idx)}
-                      className="p-0.5 text-foreground/30 hover:text-red-400"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                  <div key={idx} className="space-y-1">
+                    {/* Basic info row */}
+                    <div className="flex gap-1 items-start">
+                      <input
+                        type="text"
+                        value={char.name}
+                        onChange={(e) => handleUpdateCharacter(idx, 'name', e.target.value)}
+                        placeholder="角色名"
+                        className="w-20 px-1.5 py-0.5 text-[10px] bg-card/60 border border-border/50 rounded text-foreground focus:outline-none focus:border-purple-500/50"
+                      />
+                      <input
+                        type="text"
+                        value={char.description}
+                        onChange={(e) => handleUpdateCharacter(idx, 'description', e.target.value)}
+                        placeholder="外观描述 (如: tall man with silver hair)"
+                        className="flex-1 px-1.5 py-0.5 text-[10px] bg-card/60 border border-border/50 rounded text-foreground focus:outline-none focus:border-purple-500/50"
+                      />
+                      <button
+                        onClick={() => handleRemoveCharacter(idx)}
+                        className="p-0.5 text-foreground/30 hover:text-red-400"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                    {/* Cinematic mode extra fields */}
+                    {storyboardMode === 'cinematic' && (
+                      <div className="flex gap-1 items-start ml-0 pl-0">
+                        <input
+                          type="text"
+                          value={char.personality || ''}
+                          onChange={(e) => handleUpdateCharacter(idx, 'personality', e.target.value)}
+                          placeholder="性格特点 (如: 开朗、内向、勇敢)"
+                          className="flex-1 px-1.5 py-0.5 text-[10px] bg-purple-500/10 border border-purple-500/30 rounded text-foreground focus:outline-none focus:border-purple-500/50"
+                        />
+                        <select
+                          value={char.voiceStyle || ''}
+                          onChange={(e) => handleUpdateCharacter(idx, 'voiceStyle', e.target.value)}
+                          className="w-24 px-1 py-0.5 text-[10px] bg-purple-500/10 border border-purple-500/30 rounded text-foreground focus:outline-none focus:border-purple-500/50"
+                        >
+                          <option value="">配音风格</option>
+                          {VOICE_STYLE_PRESETS.map((preset) => (
+                            <option key={preset.id} value={preset.value}>
+                              {preset.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

@@ -46,12 +46,18 @@ import {
   LayoutTemplate,
   X as XIcon,
   Film,
+  Scissors,
+  Sparkles,
 } from 'lucide-react';
 import { toast } from '@/components/ui/toaster';
 import { cn } from '@/lib/utils';
 import type { CharacterCard, WorkspaceData, WorkspaceEdge, WorkspaceNode, WorkspaceNodeType, ChatModel, SafeImageModel, SafeVideoModel, StoryboardData, StoryboardScene, CameraMovement, PROMPT_TEMPLATES } from '@/types';
 import { CAMERA_MOVEMENT_PRESETS } from '@/types';
 import { StoryboardPreview } from '@/components/workspace/StoryboardPreview';
+import { StoryboardSplitter, SliceData } from '@/components/workspace/StoryboardSplitter';
+import { parseCinematicStoryboard, isCinematicFormat } from '@/lib/storyboard-parser';
+import { uploadSlicesWithProgress } from '@/lib/slice-upload';
+import { batchUpscaleWithFallback } from '@/lib/batch-upscale';
 
 interface PromptTemplate {
   id: string;
@@ -101,12 +107,20 @@ function getImageResolution(
   return '';
 }
 
-// 尝试解析分镜 JSON
+// 尝试解析分镜 JSON（支持快速分镜和影视分镜两种格式）
 function tryParseStoryboard(text: string): StoryboardData | null {
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
     const json = JSON.parse(jsonMatch[0]);
+
+    // Check if it's cinematic format (storyboard array with storyboardContent)
+    if (isCinematicFormat(json)) {
+      console.log('[tryParseStoryboard] Detected cinematic format, parsing...');
+      return parseCinematicStoryboard(json);
+    }
+
+    // Quick mode format (scenes array)
     if (json.scenes && Array.isArray(json.scenes)) {
       // Ensure all scenes have selected: true by default
       json.scenes = json.scenes.map((scene: Record<string, unknown>, idx: number) => ({
@@ -220,6 +234,14 @@ export default function WorkspaceEditorPage() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sourceNodeId?: string } | null>(null);
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  // Storyboard splitter state
+  const [splitterOpen, setSplitterOpen] = useState(false);
+  const [splitterImageUrl, setSplitterImageUrl] = useState<string | null>(null);
+  const [splitterSourceNode, setSplitterSourceNode] = useState<WorkspaceNode | null>(null);
+  const [splitterProgress, setSplitterProgress] = useState<{ stage: string; percent: number } | null>(null);
+  // Perspective explosion state
+  const [perspectiveProgress, setPerspectiveProgress] = useState<{ stage: string; percent: number } | null>(null);
+  const [perspectiveSourceNode, setPerspectiveSourceNode] = useState<WorkspaceNode | null>(null);
   const [hoveredCard, setHoveredCard] = useState<{
     nodeId: string;
     card: CharacterCard;
@@ -611,6 +633,15 @@ export default function WorkspaceEditorPage() {
     [addNodeAt, getViewportCenter]
   );
 
+  // Open storyboard splitter for an image node
+  const openSplitter = useCallback((node: WorkspaceNode) => {
+    if (node.data.outputUrl) {
+      setSplitterImageUrl(node.data.outputUrl);
+      setSplitterSourceNode(node);
+      setSplitterOpen(true);
+    }
+  }, []);
+
   const handleCanvasContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
     if (window.innerWidth < 640) {
@@ -980,22 +1011,38 @@ export default function WorkspaceEditorPage() {
         parts.push(storyboardData.style_prefix);
       }
 
-      // 2. Add character descriptions (if any match the scene's characters)
-      if (sceneCharacters && sceneCharacters.length > 0 && storyboardData.characters) {
-        const charDescriptions = sceneCharacters
-          .map(charName => {
-            const charDef = storyboardData.characters?.find(c =>
-              c.name === charName || c.alias?.includes(charName)
-            );
-            if (charDef?.description) {
-              return `${charName}: ${charDef.description}`;
-            }
-            return null;
-          })
-          .filter(Boolean);
+      // 2. Add character descriptions
+      // For cinematic mode: character "name" is already the full visual description
+      // For quick mode: use name + description matching
+      if (storyboardData.characters && storyboardData.characters.length > 0) {
+        const isCinematicMode = storyboardData.storyboard_mode === 'cinematic';
 
-        if (charDescriptions.length > 0) {
-          parts.push(charDescriptions.join(', '));
+        if (isCinematicMode) {
+          // Cinematic mode: always include all character visual descriptions
+          // because the AI prompt format uses name as full visual description
+          const charDescriptions = storyboardData.characters
+            .map(c => c.description || c.name)
+            .filter(Boolean);
+          if (charDescriptions.length > 0) {
+            parts.push(`Characters: ${charDescriptions.join('; ')}`);
+          }
+        } else if (sceneCharacters && sceneCharacters.length > 0) {
+          // Quick mode: match by scene's character references
+          const charDescriptions = sceneCharacters
+            .map(charName => {
+              const charDef = storyboardData.characters?.find(c =>
+                c.name === charName || c.alias?.includes(charName)
+              );
+              if (charDef?.description) {
+                return `${charName}: ${charDef.description}`;
+              }
+              return null;
+            })
+            .filter(Boolean);
+
+          if (charDescriptions.length > 0) {
+            parts.push(charDescriptions.join(', '));
+          }
         }
       }
 
@@ -1284,6 +1331,126 @@ export default function WorkspaceEditorPage() {
 
     // Return created image node IDs for batch execution
     return newNodes.filter(n => n.type === 'image').map(n => n.id);
+  };
+
+  /**
+   * Create node groups for storyboard slices
+   * Each slice creates: Image (with uploaded image) -> Chat (看图生成提示词) -> Video
+   */
+  const createStoryboardSliceGroups = (params: {
+    slices: Array<{ imageUrl: string; index: number }>;
+    storyContext: string;
+    sourceNodeId: string;
+    sourcePosition: { x: number; y: number };
+  }) => {
+    const { slices, storyContext, sourcePosition } = params;
+
+    const newNodes: WorkspaceNode[] = [];
+    const newEdges: WorkspaceEdge[] = [];
+    const imageNodeIds: string[] = [];
+    const chatNodeIds: string[] = [];
+    const videoNodeIds: string[] = [];
+
+    // Layout configuration
+    const horizontalGap = 320;
+    const verticalGap = 200;
+    const nodesPerRow = 4;
+
+    // Get default models
+    const defaultImageModel = imageModels[0];
+    const defaultVideoModel = videoModels[0];
+    const defaultChatModel = chatModels[0];
+
+    slices.forEach(({ imageUrl, index }, i) => {
+      const imageId = crypto.randomUUID();
+      const chatId = crypto.randomUUID();
+      const videoId = crypto.randomUUID();
+
+      // Calculate position (grid layout)
+      const row = Math.floor(i / nodesPerRow);
+      const col = i % nodesPerRow;
+      const baseX = sourcePosition.x + 400 + col * horizontalGap;
+      const baseY = sourcePosition.y + row * (verticalGap * 3 + 100);
+
+      // 1. Image Node - with pre-filled uploaded image (already completed)
+      const imageNode: WorkspaceNode = {
+        id: imageId,
+        type: 'image',
+        name: `切片 ${index + 1} - 图片`,
+        position: { x: baseX, y: baseY },
+        data: {
+          prompt: '',
+          modelId: defaultImageModel?.id || '',
+          aspectRatio: '16:9',
+          uploadedImages: [imageUrl],
+          status: 'completed',
+          outputUrl: imageUrl,
+        },
+      };
+      newNodes.push(imageNode);
+      imageNodeIds.push(imageId);
+
+      // 2. Chat Node - configured to analyze image and generate video prompt
+      const chatNode: WorkspaceNode = {
+        id: chatId,
+        type: 'chat',
+        name: `切片 ${index + 1} - 提示词生成`,
+        position: { x: baseX, y: baseY + verticalGap },
+        data: {
+          prompt: `请根据这张分镜图片，生成一段用于视频生成的提示词。
+
+故事背景：
+${storyContext}
+
+要求：
+1. 描述画面主体和动作
+2. 描述镜头运动建议（如推进、平移、跟踪等）
+3. 描述氛围和光影
+4. 输出纯英文，不要 JSON 格式`,
+          chatModelId: defaultChatModel?.id || '',
+          inputImages: [imageUrl],
+          pureMode: true,
+          status: 'idle',
+        },
+      };
+      newNodes.push(chatNode);
+      chatNodeIds.push(chatId);
+
+      // 3. Video Node
+      const videoNode: WorkspaceNode = {
+        id: videoId,
+        type: 'video',
+        name: `切片 ${index + 1} - 视频`,
+        position: { x: baseX, y: baseY + verticalGap * 2 },
+        data: {
+          prompt: '',
+          modelId: defaultVideoModel?.id || '',
+          aspectRatio: '16:9',
+          duration: '5s',
+          status: 'idle',
+        },
+      };
+      newNodes.push(videoNode);
+      videoNodeIds.push(videoId);
+
+      // Create edges: Image -> Chat, Chat -> Video, Image -> Video
+      newEdges.push(
+        { id: `${imageId}-${chatId}`, from: imageId, to: chatId },
+        { id: `${chatId}-${videoId}`, from: chatId, to: videoId },
+        { id: `${imageId}-${videoId}`, from: imageId, to: videoId }
+      );
+    });
+
+    // Update state
+    setNodesDirty((prev) => [...prev, ...newNodes]);
+    setEdgesDirty((prev) => [...prev, ...newEdges]);
+
+    toast({
+      title: `已创建 ${slices.length} 组分镜节点`,
+      description: 'Image → Chat → Video 节点组已自动连接',
+    });
+
+    return { imageNodeIds, chatNodeIds, videoNodeIds };
   };
 
   const removeEdge = (edgeId: string) => {
@@ -1661,6 +1828,265 @@ export default function WorkspaceEditorPage() {
       });
     }
   };
+
+  // Handle storyboard split confirmation
+  const handleSplitConfirm = useCallback(async (slices: SliceData[]) => {
+    if (!splitterSourceNode) return;
+
+    try {
+      // Stage 1: Upload slices
+      setSplitterProgress({ stage: '上传切片', percent: 0 });
+      const uploadResults = await uploadSlicesWithProgress(
+        slices.map(s => ({ blob: s.blob, index: s.index })),
+        (percent) => setSplitterProgress({ stage: '上传切片', percent })
+      );
+
+      // Stage 2: Upscale images (skip for now if API not configured)
+      setSplitterProgress({ stage: '放大图片', percent: 0 });
+      const upscaleResults = await batchUpscaleWithFallback(
+        uploadResults.map(r => ({ url: r.url, index: r.index })),
+        {
+          quality: '1080p',
+          onProgress: (percent) => setSplitterProgress({ stage: '放大图片', percent }),
+          skipUpscale: uploadResults.some(r => r.isBase64), // Skip upscale if using base64
+        }
+      );
+
+      // Stage 3: Get story context from connected chat node
+      let storyContext = '';
+      const connectedEdge = edges.find(e => e.to === splitterSourceNode.id);
+      if (connectedEdge) {
+        const chatNode = nodes.find(n => n.id === connectedEdge.from && n.type === 'chat');
+        if (chatNode?.data.chatOutput) {
+          storyContext = chatNode.data.chatOutput;
+        }
+      }
+
+      // Stage 4: Create node groups
+      setSplitterProgress({ stage: '创建节点', percent: 50 });
+      const { chatNodeIds } = createStoryboardSliceGroups({
+        slices: upscaleResults.map(r => ({ imageUrl: r.url, index: r.index })),
+        storyContext: storyContext || '(无故事上下文)',
+        sourceNodeId: splitterSourceNode.id,
+        sourcePosition: splitterSourceNode.position,
+      });
+
+      // Stage 5: Auto-execute chat nodes
+      setSplitterProgress({ stage: '生成提示词', percent: 0 });
+
+      // Execute chat nodes one by one
+      for (let i = 0; i < chatNodeIds.length; i++) {
+        const nodeId = chatNodeIds[i];
+        const node = nodesRef.current.find(n => n.id === nodeId);
+        if (node) {
+          await handleChatGenerate(node);
+        }
+        setSplitterProgress({
+          stage: '生成提示词',
+          percent: Math.round(((i + 1) / chatNodeIds.length) * 100)
+        });
+      }
+
+      // Done
+      setSplitterProgress(null);
+      setSplitterOpen(false);
+      setSplitterImageUrl(null);
+      setSplitterSourceNode(null);
+
+      toast({
+        title: '分镜拆分完成',
+        description: `已创建 ${slices.length} 组节点，提示词已自动生成`,
+      });
+    } catch (error) {
+      console.error('[handleSplitConfirm] Error:', error);
+      setSplitterProgress(null);
+      toast({
+        title: '拆分失败',
+        description: error instanceof Error ? error.message : '未知错误',
+      });
+    }
+  }, [splitterSourceNode, edges, nodes, createStoryboardSliceGroups, handleChatGenerate]);
+
+  // Handle perspective explosion - generate 9 multi-angle shots from a single image
+  const handlePerspectiveExplosion = useCallback(async (sourceNode: WorkspaceNode) => {
+    if (!sourceNode.data.outputUrl) {
+      toast({ title: '请先生成图片', description: '需要已完成的图片才能进行视角裂变' });
+      return;
+    }
+
+    // Find the first available chat model that supports vision
+    const visionChatModel = chatModels.find(m => m.supportsVision);
+    if (!visionChatModel) {
+      toast({ title: '无可用模型', description: '需要支持视觉的 Chat 模型来分析图片' });
+      return;
+    }
+
+    // Find NanoBananaPro or first available image model
+    const targetImageModel = imageModels.find(m =>
+      m.id.toLowerCase().includes('nanobananapro') ||
+      m.id.toLowerCase().includes('nano-banana')
+    ) || imageModels[0];
+
+    if (!targetImageModel) {
+      toast({ title: '无可用模型', description: '需要图片生成模型' });
+      return;
+    }
+
+    setPerspectiveSourceNode(sourceNode);
+    setPerspectiveProgress({ stage: '分析图片', percent: 10 });
+
+    try {
+      // Step 1: Get prompt from source node or generate description
+      let imageDescription = sourceNode.data.prompt || '';
+
+      // If no prompt, ask Chat to describe the image
+      if (!imageDescription) {
+        setPerspectiveProgress({ stage: '识别图片内容', percent: 20 });
+
+        const descResponse = await fetch('/api/chat/workspace', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            modelId: visionChatModel.id,
+            prompt: '请用英文详细描述这张图片的内容，包括人物外观、衣着、表情、姿态、环境、光线等所有视觉细节。只输出描述，不要其他内容。',
+            images: [sourceNode.data.outputUrl],
+          }),
+        });
+
+        if (!descResponse.ok) {
+          throw new Error('图片描述生成失败');
+        }
+
+        const descData = await descResponse.json();
+        imageDescription = descData.data?.content || '';
+      }
+
+      if (!imageDescription) {
+        throw new Error('无法获取图片描述');
+      }
+
+      // Step 2: Generate 9 perspective prompts using the template
+      setPerspectiveProgress({ stage: '生成视角提示词', percent: 40 });
+
+      const perspectiveTemplate = promptTemplates.find(t => t.id === 'perspective-explosion-3x3');
+      const systemPrompt = perspectiveTemplate?.content || '';
+
+      const perspectiveResponse = await fetch('/api/chat/workspace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelId: visionChatModel.id,
+          prompt: `${systemPrompt}\n\n用户参考图描述：\n${imageDescription}`,
+          images: [sourceNode.data.outputUrl],
+        }),
+      });
+
+      if (!perspectiveResponse.ok) {
+        throw new Error('视角提示词生成失败');
+      }
+
+      const perspectiveData = await perspectiveResponse.json();
+      const jsonContent = perspectiveData.data?.content || '';
+
+      // Step 3: Parse JSON from response
+      setPerspectiveProgress({ stage: '解析提示词', percent: 60 });
+
+      // Extract JSON from markdown code block if present
+      const jsonMatch = jsonContent.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, jsonContent];
+      const jsonStr = jsonMatch[1]?.trim() || jsonContent;
+
+      let parsedData: { shots?: Array<{ shot_number: string; prompt_text: string }> };
+      try {
+        parsedData = JSON.parse(jsonStr);
+      } catch {
+        throw new Error('JSON 解析失败，请重试');
+      }
+
+      const shots = parsedData.shots;
+      if (!shots || !Array.isArray(shots) || shots.length === 0) {
+        throw new Error('未找到有效的分镜数据');
+      }
+
+      // Step 4: Create 9 Image nodes in 3x3 grid
+      setPerspectiveProgress({ stage: '创建节点', percent: 70 });
+
+      const baseX = sourceNode.position.x + 400;
+      const baseY = sourceNode.position.y - 200;
+      const nodeWidth = 320;
+      const nodeHeight = 280;
+      const gap = 20;
+
+      const newImageNodes: WorkspaceNode[] = [];
+      const newEdges: WorkspaceEdge[] = [];
+
+      for (let i = 0; i < Math.min(shots.length, 9); i++) {
+        const shot = shots[i];
+        const row = Math.floor(i / 3);
+        const col = i % 3;
+
+        const nodeId = `perspective-${sourceNode.id}-${i}-${Date.now()}`;
+        const newNode: WorkspaceNode = {
+          id: nodeId,
+          type: 'image',
+          name: shot.shot_number || `视角 ${i + 1}`,
+          position: {
+            x: baseX + col * (nodeWidth + gap),
+            y: baseY + row * (nodeHeight + gap),
+          },
+          data: {
+            prompt: shot.prompt_text || '',
+            modelId: targetImageModel.id,
+            aspectRatio: '16:9',
+            status: 'idle',
+          },
+        };
+
+        newImageNodes.push(newNode);
+
+        // Connect source node to each new node
+        if (i === 0) {
+          newEdges.push({
+            id: `edge-${sourceNode.id}-${nodeId}`,
+            from: sourceNode.id,
+            to: nodeId,
+          });
+        }
+      }
+
+      // Add nodes and edges
+      setNodesDirty(prev => [...prev, ...newImageNodes]);
+      setEdgesDirty(prev => [...prev, ...newEdges]);
+
+      // Step 5: Execute all image nodes
+      setPerspectiveProgress({ stage: '生成图片', percent: 80 });
+
+      // Wait for state to update
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Execute image generation for all nodes
+      const nodeIds = newImageNodes.map(n => n.id);
+      if (nodeIds.length > 0) {
+        runBatchNodes(nodeIds, false); // No cascade since these are leaf nodes
+      }
+
+      setPerspectiveProgress(null);
+      setPerspectiveSourceNode(null);
+
+      toast({
+        title: '视角裂变完成',
+        description: `已创建 ${newImageNodes.length} 个视角分镜，正在生成图片...`,
+      });
+
+    } catch (error) {
+      console.error('[handlePerspectiveExplosion] Error:', error);
+      setPerspectiveProgress(null);
+      setPerspectiveSourceNode(null);
+      toast({
+        title: '视角裂变失败',
+        description: error instanceof Error ? error.message : '未知错误',
+      });
+    }
+  }, [chatModels, imageModels, promptTemplates, setNodesDirty, setEdgesDirty, runBatchNodes]);
 
   const waitForNodeStatus = useCallback(
     (nodeId: string, timeoutMs = 8 * 60 * 1000) =>
@@ -2829,6 +3255,34 @@ export default function WorkspaceEditorPage() {
                           <Download className="w-3 h-3" />
                           下载
                         </a>
+                        {/* Split storyboard button - only for image nodes */}
+                        {node.type === 'image' && node.data.outputUrl && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openSplitter(node);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-2 py-1 text-[10px] text-purple-400 hover:text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 rounded-lg transition"
+                            title="拆分分镜"
+                          >
+                            <Scissors className="w-3 h-3" />
+                            拆分
+                          </button>
+                        )}
+                        {/* Perspective explosion button - only for completed image nodes */}
+                        {node.type === 'image' && node.data.outputUrl && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePerspectiveExplosion(node);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-2 py-1 text-[10px] text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg transition"
+                            title="视角裂变 - 生成9个多视角分镜"
+                          >
+                            <Sparkles className="w-3 h-3" />
+                            裂变
+                          </button>
+                        )}
                       </div>
                     )}
 
@@ -3050,6 +3504,42 @@ export default function WorkspaceEditorPage() {
         <div className="text-xs text-foreground/40 flex items-center gap-2">
           <Check className="w-3 h-3" />
           点击目标节点左侧圆点完成连线
+        </div>
+      )}
+
+      {/* Storyboard Splitter Modal */}
+      {splitterOpen && splitterImageUrl && (
+        <StoryboardSplitter
+          imageUrl={splitterImageUrl}
+          onConfirm={handleSplitConfirm}
+          onCancel={() => {
+            setSplitterOpen(false);
+            setSplitterImageUrl(null);
+            setSplitterSourceNode(null);
+          }}
+        />
+      )}
+
+      {/* Splitter Progress Overlay */}
+      {splitterProgress && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+          <div className="bg-zinc-900 rounded-xl p-6 text-center">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-purple-400" />
+            <div className="text-white font-medium">{splitterProgress.stage}</div>
+            <div className="text-zinc-400 text-sm mt-1">{splitterProgress.percent}%</div>
+          </div>
+        </div>
+      )}
+
+      {/* Perspective Explosion Progress Overlay */}
+      {perspectiveProgress && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+          <div className="bg-zinc-900 rounded-xl p-6 text-center">
+            <Sparkles className="w-8 h-8 animate-pulse mx-auto mb-4 text-amber-400" />
+            <div className="text-white font-medium">{perspectiveProgress.stage}</div>
+            <div className="text-zinc-400 text-sm mt-1">{perspectiveProgress.percent}%</div>
+            <div className="text-zinc-500 text-xs mt-2">视角裂变中...</div>
+          </div>
         </div>
       )}
     </div>

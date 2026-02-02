@@ -547,6 +547,9 @@ export interface StoryboardCharacter {
   name: string;           // Character identifier (e.g., "Moon Man")
   description: string;    // Visual description for prompts
   alias?: string[];       // Alternative names/references
+  // Cinematic mode fields
+  personality?: string;   // Character personality traits
+  voiceStyle?: string;    // Voice style for dubbing reference
 }
 
 // Location definition for consistency across scenes
@@ -554,6 +557,21 @@ export interface StoryboardLocation {
   name: string;           // Location identifier (e.g., "Outer Space")
   description: string;    // Visual description for prompts
 }
+
+// Voice style presets for cinematic mode
+export const VOICE_STYLE_PRESETS = [
+  { id: 'young-female', label: '年轻女声', value: 'female voice, young adult voice, medium-high pitch, bright timbre, light voice, clean voice' },
+  { id: 'mature-female', label: '成熟女声', value: 'female voice, adult voice, medium pitch, warm timbre, medium voice, smooth voice' },
+  { id: 'young-male', label: '年轻男声', value: 'male voice, young adult voice, medium pitch, clear timbre, light voice, energetic tone' },
+  { id: 'mature-male', label: '成熟男声', value: 'male voice, adult voice, low-medium pitch, deep timbre, medium voice, authoritative tone' },
+  { id: 'elderly-male', label: '老年男声', value: 'male voice, old-aged voice, medium-high pitch, bright timbre, slightly breathy voice, raspy voice' },
+  { id: 'elderly-female', label: '老年女声', value: 'female voice, old-aged voice, medium pitch, warm timbre, slightly breathy voice, gentle tone' },
+  { id: 'child', label: '儿童声', value: 'child voice, high pitch, bright timbre, light voice, innocent tone, clear articulation' },
+  { id: 'narrator', label: '旁白音', value: 'neutral voice, medium pitch, clear timbre, professional tone, crisp articulation, authoritative' },
+] as const;
+
+// Storyboard mode type
+export type StoryboardModeType = 'quick' | 'cinematic';
 
 export interface StoryboardScene {
   id: number;
@@ -576,11 +594,16 @@ export interface StoryboardScene {
   // Thumbnail preview
   thumbnailUrl?: string;      // Generated thumbnail image URL
   thumbnailLoading?: boolean; // Whether thumbnail is being generated
+  // Cinematic mode fields
+  timeRange?: string;         // Precise time range e.g. "0.1-2.0s" for cinematic mode
+  startTime?: number;         // Start time in seconds (for editing)
+  endTime?: number;           // End time in seconds (for editing)
 }
 
 export interface StoryboardData {
   title?: string;             // Project title
   frame_mode: StoryboardFrameMode;  // AI recommended frame mode
+  storyboard_mode?: StoryboardModeType;  // 'quick' or 'cinematic' mode
   scenes: StoryboardScene[];
   // Character & Scene consistency (方案一)
   characters?: StoryboardCharacter[];  // Character definitions
@@ -598,6 +621,7 @@ export interface PromptTemplate {
   id: string;
   name: string;
   description: string;
+  type?: 'system' | 'user';  // Template type: system prompt or user prompt
   content: string;
 }
 
@@ -773,6 +797,164 @@ Guidelines:
 - characters array helps track consistency across scenes
 - location helps maintain scene continuity
 - Do not output anything else except the JSON.`,
+  },
+  {
+    id: 'cinematic-storyboard-director',
+    name: '影视级分镜导演',
+    description: '专业影视分镜模式，支持角色定义、智能分镜规划',
+    type: 'system',
+    content: `You are a professional cinematic storyboard director specializing in film-quality storyboard generation.
+
+IMPORTANT RULES:
+1. Ensure the content of the video fills the entire frame without any margins or borders.
+2. Each storyboard entry = ONE video generation task (8-10 seconds each).
+3. Split scenes ONLY at major changes: character switch, location change, or significant action shift.
+4. Do NOT over-fragment: a continuous action should be ONE storyboard entry, not multiple 2-second clips.
+
+Your task is to analyze the user's story/script and create a detailed cinematic storyboard with:
+1. Character definitions with personality and voice style for dubbing reference
+2. Scene-based planning (each scene = one video generation, typically 8-10s)
+3. Professional cinematography guidance with camera movements
+
+Output format (JSON only):
+{
+  "title": "storyboard title",
+  "frame_mode": "first_frame",
+  "storyboard_mode": "cinematic",
+  "total_duration": 30.0,
+  "characters": [
+    {
+      "name": "detailed character visual description (e.g., woman in black professional attire with long hair)",
+      "personality": "character personality traits (e.g., Proud, fiercely defensive of her family, and emotionally intense.)",
+      "voiceStyle": "voice characteristics for dubbing (e.g., female voice, young adult voice, medium-high pitch, bright timbre, light voice, clean voice, crisp articulation.)"
+    }
+  ],
+  "storyboard": [
+    {
+      "storyboardContent": "Scene 1 (0-8s): Medium shot, the woman in black attire stands in the hospital corridor, morning light streaming through windows. She takes a deep breath, clenches her fist, then walks determinedly forward. Camera slowly dollies alongside her movement, maintaining eye-level angle. Ambient hospital sounds in background."
+    },
+    {
+      "storyboardContent": "Scene 2 (8-16s): Close-up on elderly doctor's face as he looks up from medical charts. His expression shifts from surprise to calculation. Camera holds steady, natural office lighting. Cut to over-shoulder shot as he removes his glasses, preparing to speak."
+    }
+  ]
+}
+
+Guidelines:
+- CRITICAL: Each storyboardContent = ONE video generation (8-10s). Do not fragment into 2s clips!
+- storyboardContent format: "Scene N (start-end): Shot type, detailed action description, camera movement, lighting, audio notes"
+- Split scenes at: character changes, location changes, significant emotional beats, or when camera angle fundamentally changes
+- Keep continuous actions in ONE scene (e.g., "character walks and speaks" = one scene, not three)
+- Character name in "characters" array should be a complete visual description, not just a name
+- personality: Character's emotional and behavioral traits
+- voiceStyle: Detailed dubbing reference (gender, age, pitch, timbre, voice quality, articulation)
+- Include camera movements: static, pan, tilt, dolly, crane, handheld, tracking, zoom
+- Include shot types: establishing, wide, medium, close-up, extreme close-up, over-shoulder, POV, aerial
+- For dialogue scenes, one speaking turn = typically one scene (8-10s allows ~20-25 words of dialogue)
+- Time ranges are for editing reference only; actual video length is determined by the generation model
+- Do not output anything else except the JSON.`,
+  },
+  {
+    id: 'storyboard-to-video-prompt',
+    name: '分镜图转视频提示词',
+    description: '根据分镜图片生成视频提示词',
+    content: `你是一个专业的视频提示词生成专家。
+
+用户会提供：
+1. 一张分镜图片
+2. 故事背景/上下文
+
+请根据图片内容和故事上下文，生成一段详细的视频生成提示词。
+
+提示词应包含：
+- 画面主体描述（人物、场景、物体）
+- 动作/运动描述（人物动作、物体运动）
+- 镜头运动建议（如推进、平移、跟踪、固定等）
+- 氛围/光影描述（时间、天气、光线、色调）
+
+输出格式要求：
+- 纯英文描述
+- 不要 JSON 格式
+- 不要额外解释
+- 直接输出可用于视频生成的提示词`,
+  },
+  {
+    id: 'perspective-explosion-3x3',
+    name: '视角裂变 3x3',
+    description: '基于单张参考图生成9个多视角分镜提示词（NanoBananaPro）',
+    content: `你是"多维视角一致性生成助手"，专门为 NanoBananaPro 图像模型生成 3x3 九宫格分镜提示词。
+
+## 核心能力
+- **视觉锁定**：精准提取并锁定参考图中的核心元素（人物ID、衣着细节、环境布局、光影），确保9张分镜中这些描述高度一致
+- **特定镜头强化**：侧重沉浸式和关系视角，重点生成背后、过肩及主观镜头
+- **高张力构图**：避免平庸的平视镜头，使用极端或有张力的景别
+
+## 镜头变量库
+
+景别（禁止使用 Medium Shot, Long Shot, Close-up）：
+- Extreme Close-up (ECU - Focus on eyes/details)
+- Full Body Shot
+- Cowboy Shot (Thigh-up)
+- Upper Body Shot (Chest-up)
+- Wide Angle Full Shot
+
+视角：
+- Back View (Walking away/Looking at scenery)
+- Over-the-Shoulder (OTS)
+- Point of View (POV)
+- Low Angle (Heroic)
+- High Angle (Vulnerable)
+- Dutch Angle (Tilted)
+- Top-Down / God's Eye View
+
+构图：
+- Rule of Thirds
+- Center Composition
+- Depth of Field (Bokeh)
+- Framing within a frame
+- Dynamic Diagonal
+
+## 强制视角分布（9个分镜）
+- 至少 2个 背后视角 (Back View)
+- 至少 3个 过肩视角 (Over-the-Shoulder)
+- 至少 2个 主观视角 (Point of View/POV)
+- 剩余 2个 自由选择高张力视角（如上帝视角或大特写）
+
+## 输入处理
+1. 将用户的图片描述定义为 [Base_Prompt]，这部分不可修改
+2. 按强制分布分配视角
+3. Prompt结构 = [Camera_Setup] + [Base_Prompt] + [Quality_Tags] + [Marking_Instructions]
+
+## 输出格式
+必须输出纯净的 JSON，包含精确 9 个分镜：
+
+\`\`\`json
+{
+  "image_generation_model": "NanoBananaPro",
+  "grid_layout": "3x3",
+  "grid_aspect_ratio": "16:9",
+  "global_watermark": {
+    "position": "bottom_center",
+    "size": "small"
+  },
+  "shots": [
+    {
+      "shot_number": "分镜1",
+      "prompt_text": "[镜头语言], [固定参考图描述], [画质词]. '分镜1' in the top-left corner. No timecode, no subtitles."
+    },
+    // ... 共9个
+  ]
+}
+\`\`\`
+
+## 硬性约束
+- C1: 一致性绝对优先，人物特征和环境必须保持一致
+- C2: 严格遵守视角强制分布
+- C3: 禁止使用 Medium Shot, Long Shot, Close-up 等平庸描述
+- C4: shots 数组必须精确包含 9 个对象
+- C5: 每个 prompt 必须包含 "'分镜X' in the top-left corner" 和 "no timecode, no subtitles"
+- C6: Prompt 内容必须为英文
+
+请根据用户提供的参考图描述，生成 JSON 格式的 9 个分镜提示词。`,
   },
 ];
 
