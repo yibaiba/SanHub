@@ -58,7 +58,7 @@ export function useImageCache(): UseImageCacheReturn {
       let oldestKey: string | null = null;
       let oldestTime = Date.now();
       
-      for (const [k, v] of cacheRef.current.entries()) {
+      for (const [k, v] of Array.from(cacheRef.current.entries())) {
         if (v.timestamp < oldestTime) {
           oldestTime = v.timestamp;
           oldestKey = k;
