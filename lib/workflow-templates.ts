@@ -175,5 +175,55 @@ export const WORKFLOW_PRESETS: { id: string; name: string; description: string; 
         { from: 'template-1', to: 'image-2' }
       ]
     }
+  },
+  {
+    id: 'zodiac-12-preferences',
+    name: '12星座系列',
+    description: '生成12星座主题分镜，适合制作星座短视频内容',
+    template: {
+      version: '1.0.0',
+      metadata: {
+        name: '12星座系列',
+        createdAt: new Date().toISOString(),
+        nodeCount: 3,
+        edgeCount: 2,
+      },
+      nodes: [
+        {
+          id: 'template-1',
+          type: 'prompt-template',
+          name: '星座分镜模板',
+          position: { x: 100, y: 200 },
+          config: {
+            templateId: 'zodiac-preferences'
+          }
+        },
+        {
+          id: 'chat-1',
+          type: 'chat',
+          name: '生成12星座分镜',
+          position: { x: 500, y: 200 },
+          config: {
+            prompt: '12星座最喜欢的甜品',
+            storyboardMode: true,
+            pureMode: false
+          }
+        },
+        {
+          id: 'image-1',
+          type: 'image',
+          name: '分镜预览',
+          position: { x: 900, y: 200 },
+          config: {
+            aspectRatio: '9:16',
+            imageSize: '1K'
+          }
+        }
+      ],
+      edges: [
+        { from: 'template-1', to: 'chat-1' },
+        { from: 'chat-1', to: 'image-1' }
+      ]
+    }
   }
 ];
