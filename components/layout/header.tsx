@@ -68,7 +68,7 @@ export function Header({ user }: HeaderProps) {
               )}
               <button
                 className="p-2 hover:bg-foreground/5 rounded-lg transition-colors"
-                onClick={() => signOut({ callbackUrl: '/login' })}
+                onClick={() => signOut({ callbackUrl: `${window.location.origin}/login` })}
               >
                 <LogOut className="w-4 h-4 text-foreground/60" />
               </button>

@@ -387,7 +387,7 @@ export default function SettingsPage() {
         </div>
         <div className="p-6">
           <button 
-            onClick={() => signOut({ callbackUrl: '/login' })}
+            onClick={() => signOut({ callbackUrl: `${window.location.origin}/login` })}
             className="flex items-center gap-2 px-6 py-3 bg-red-500/10 border border-red-500/30 text-red-300 rounded-xl font-medium hover:bg-red-500/20 transition-colors"
           >
             <LogOut className="w-4 h-4" />

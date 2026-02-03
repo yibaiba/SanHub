@@ -213,6 +213,13 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
+      console.error('[Workspace Chat] API error:', {
+        status: response.status,
+        statusText: response.statusText,
+        modelId: model.modelId,
+        apiUrl: model.apiUrl,
+        errorData,
+      });
       throw new Error(errorData.error?.message || `API 调用失败: ${response.status}`);
     }
 
