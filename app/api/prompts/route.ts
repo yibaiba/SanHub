@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { PROMPT_TEMPLATES } from '@/types';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -27,7 +28,8 @@ export async function GET() {
 
     await ensureDir();
     const files = await fs.readdir(PROMPTS_DIR);
-    const templates = await Promise.all(
+    // Load file-based templates
+    const fileTemplates = await Promise.all(
       files
         .filter((f) => f.endsWith('.txt'))
         .map(async (f) => {
@@ -39,6 +41,11 @@ export async function GET() {
           };
         })
     );
+
+    // Merge with default templates (file templates override defaults with same id)
+    const fileIds = new Set(fileTemplates.map(t => t.id));
+    const defaultTemplates = PROMPT_TEMPLATES.filter(t => !fileIds.has(t.id));
+    const templates = [...defaultTemplates, ...fileTemplates];
 
     return NextResponse.json({ success: true, data: templates });
   } catch (error) {
