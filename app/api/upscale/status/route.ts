@@ -4,6 +4,8 @@ import { authOptions } from '@/lib/auth';
 import { getAdapter } from '@/lib/db';
 import { getVideoStatus } from '@/lib/sora-api'; // 复用 sora-api 的状态查询
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
