@@ -18,7 +18,8 @@ export type GenerationType =
   | 'zimage-image'
   | 'gitee-image'
   | 'chat'
-  | 'character-card';
+  | 'character-card'
+  | 'video-capture'; // 视频帧截图
 
 // 聊天模型配置
 export interface ChatModel {
@@ -113,6 +114,11 @@ export interface GenerationParams {
   permalink?: string;
   revised_prompt?: string;
   progress?: number; // 生成进度 0-100
+  // 视频帧截图参数
+  sourceVideoId?: string; // 来源视频 generation ID
+  captureTimestamp?: number; // 截取时间点（秒）
+  originalWidth?: number; // 原始宽度
+  originalHeight?: number; // 原始高度
 }
 
 // SORA 后台配置

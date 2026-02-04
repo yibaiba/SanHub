@@ -1,14 +1,15 @@
 'use client';
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, Maximize2, X, Play, Image as ImageIcon, Sparkles, Loader2, AlertCircle, Copy, ExternalLink, RotateCcw } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { Download, Maximize2, X, Play, Image as ImageIcon, Sparkles, Loader2, AlertCircle, Copy, ExternalLink, RotateCcw, Camera } from 'lucide-react';
 import type { Generation } from '@/types';
 import { formatDate, truncate } from '@/lib/utils';
 import { downloadAsset } from '@/lib/download';
 import { toast } from '@/components/ui/toaster';
 
 import { UpscaleControl } from './UpscaleControl';
+import { CaptureButton, CapturePreviewDialog } from '@/components/video';
 
 // 任务类型
 export interface Task {
@@ -46,6 +47,20 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
   const [realResolution, setRealResolution] = useState<string | null>(null);
   const [showUpscaleDialog, setShowUpscaleDialog] = useState<string | null>(null);
 
+  // 视频帧截图状态
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoReady, setVideoReady] = useState(false);
+  const [captureCount, setCaptureCount] = useState(0);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [capturePreview, setCapturePreview] = useState<{
+    imageUrl: string;
+    timestamp: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [isSavingCapture, setIsSavingCapture] = useState(false);
+  const captureCountFetchedRef = useRef<string | null>(null);
+
   useEffect(() => {
     setRealResolution(null);
   }, [selected]);
@@ -57,6 +72,148 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
       return Math.min(prev, generations.length);
     });
   }, [generations.length]);
+
+  // 获取视频截图数量
+  const fetchCaptureCount = useCallback(async (videoId: string) => {
+    if (captureCountFetchedRef.current === videoId) return;
+    try {
+      const res = await fetch(`/api/capture/count?videoId=${videoId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCaptureCount(data.data?.captureCount || 0);
+        captureCountFetchedRef.current = videoId;
+      }
+    } catch (error) {
+      console.error('[ResultGallery] Failed to fetch capture count:', error);
+    }
+  }, []);
+
+  // 当选中视频变化时重置截图状态并获取计数
+  useEffect(() => {
+    if (selected && isVideo(selected)) {
+      setCaptureCount(0);
+      setVideoReady(false);
+      captureCountFetchedRef.current = null;
+      fetchCaptureCount(selected.id);
+    }
+  }, [selected, fetchCaptureCount]);
+
+  // 截取当前帧
+  const handleCaptureFrame = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video || !selected) return;
+
+    if (captureCount >= 6) {
+      toast({ title: '该视频截图已达上限 (6 张)', variant: 'destructive' });
+      return;
+    }
+
+    setIsCapturing(true);
+    try {
+      const canvas = document.createElement('canvas');
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+
+      if (!width || !height) {
+        throw new Error('视频尚未加载完成');
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('无法创建 Canvas 上下文');
+
+      ctx.drawImage(video, 0, 0, width, height);
+
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error('Canvas toBlob failed'))),
+          'image/jpeg',
+          0.95
+        );
+      });
+
+      const imageUrl = URL.createObjectURL(blob);
+
+      setCapturePreview({
+        imageUrl,
+        timestamp: video.currentTime,
+        width,
+        height,
+      });
+    } catch (error) {
+      console.error('[ResultGallery] Capture failed:', error);
+      toast({ title: error instanceof Error ? error.message : '截取失败', variant: 'destructive' });
+    } finally {
+      setIsCapturing(false);
+    }
+  }, [selected, captureCount]);
+
+  // 取消截图预览
+  const cancelCapturePreview = useCallback(() => {
+    if (capturePreview?.imageUrl) {
+      URL.revokeObjectURL(capturePreview.imageUrl);
+    }
+    setCapturePreview(null);
+  }, [capturePreview?.imageUrl]);
+
+  // 保存截图
+  const saveCaptureToLibrary = useCallback(async () => {
+    if (!capturePreview || !selected) return;
+
+    setIsSavingCapture(true);
+    try {
+      // Blob URL 转 Base64
+      const response = await fetch(capturePreview.imageUrl);
+      const blob = await response.blob();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      const saveRes = await fetch('/api/capture/frame', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceGenerationId: selected.id,
+          imageData: base64,
+          timestamp: capturePreview.timestamp,
+          width: capturePreview.width,
+          height: capturePreview.height,
+        }),
+      });
+
+      if (!saveRes.ok) {
+        const errorData = await saveRes.json();
+        throw new Error(errorData.error || '保存失败');
+      }
+
+      const result = await saveRes.json();
+      const newCount = result.captureCount || captureCount + 1;
+
+      URL.revokeObjectURL(capturePreview.imageUrl);
+      setCapturePreview(null);
+      setCaptureCount(newCount);
+
+      toast({ title: `已保存到图片库 (${newCount}/6)` });
+    } catch (error) {
+      console.error('[ResultGallery] Save capture failed:', error);
+      toast({ title: error instanceof Error ? error.message : '保存失败', variant: 'destructive' });
+    } finally {
+      setIsSavingCapture(false);
+    }
+  }, [capturePreview, selected, captureCount]);
+
+  // 格式化时间戳
+  const formatTimestamp = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    const ms = Math.floor((seconds % 1) * 100);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+  };
 
   const downloadFile = async (url: string, id: string, type: string) => {
     if (!url) {
@@ -427,19 +584,22 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
       {/* Lightbox */}
       {selected && (
         <div
-          className="fixed inset-0 z-50 bg-background/95 backdrop-blur-xl flex items-center justify-center p-4 md:p-8"
+          className="fixed inset-0 z-50 bg-background/95 backdrop-blur-xl overflow-y-auto"
           onClick={() => setSelected(null)}
         >
-          <div className="w-full h-full flex flex-col items-center justify-center" onClick={(e) => e.stopPropagation()}>
-            <div className="w-full max-w-[90vw] max-h-[70vh] md:max-h-[75vh] flex items-center justify-center">
+          <div className="min-h-full flex flex-col items-center justify-start p-4 md:p-8" onClick={(e) => e.stopPropagation()}>
+            <div className="w-full max-w-[90vw] flex items-center justify-center">
               {isVideo(selected) ? (
                 <>
                   <video
+                    ref={videoRef}
                     src={selected.resultUrl}
-                    className="max-w-full max-h-[70vh] md:max-h-[75vh] w-auto h-auto rounded-xl border border-border/70"
+                    className="max-w-full max-h-[50vh] md:max-h-[55vh] w-auto h-auto rounded-xl border border-border/70"
                     controls
                     autoPlay
                     loop
+                    crossOrigin="anonymous"
+                    onCanPlay={() => setVideoReady(true)}
                   />
                   {selected.type === 'flow-video' && (
                     <div className="absolute top-4 right-16 z-10">
@@ -457,7 +617,7 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
                 <img
                   src={selected.resultUrl}
                   alt={selected.prompt}
-                  className="max-w-full max-h-[70vh] md:max-h-[75vh] w-auto h-auto rounded-xl border border-border/70 object-contain"
+                  className="max-w-full max-h-[50vh] md:max-h-[55vh] w-auto h-auto rounded-xl border border-border/70 object-contain"
                   onLoad={(e) => {
                     const img = e.currentTarget;
                     if (img.naturalWidth && img.naturalHeight) {
@@ -468,10 +628,10 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
               )}
             </div>
 
-            <div className="w-full max-w-3xl mt-4 md:mt-6 px-2">
-              <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <p className="text-foreground text-sm leading-relaxed truncate md:whitespace-normal">{truncate(selected.prompt || '无提示词', 150)}</p>
+            <div className="w-full max-w-3xl mt-4 md:mt-6 px-2 pb-4">
+              <div className="flex flex-col gap-4">
+                <div className="min-w-0">
+                  <p className="text-foreground text-sm leading-relaxed">{truncate(selected.prompt || '无提示词', 150)}</p>
                   <p className="text-foreground/40 text-xs mt-2">
                     {formatDate(selected.createdAt)} · 消耗 {selected.cost} 积分
                     {(realResolution || selected.params?.imageSize || selected.params?.size || selected.params?.aspectRatio) && (
@@ -547,7 +707,7 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
                     )}
                   </div>
                 </div>
-                <div className="flex gap-2 shrink-0 w-full md:w-auto">
+                <div className="flex flex-wrap gap-2 shrink-0 w-full md:w-auto">
                   {onRestoreParams && (
                     <button
                       onClick={() => {
@@ -568,6 +728,16 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
                     <Download className="w-4 h-4" />
                     下载
                   </button>
+                  {/* 视频截图按钮 */}
+                  {isVideo(selected) && (
+                    <CaptureButton
+                      current={captureCount}
+                      max={6}
+                      loading={isCapturing}
+                      disabled={!videoReady}
+                      onClick={handleCaptureFrame}
+                    />
+                  )}
                   {isVideo(selected) && selected.type === 'flow-video' && (
                     <button
                       onClick={() => setShowUpscaleDialog(selected.id)}
@@ -684,6 +854,19 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
             />
           </div>
         </div>
+      )}
+
+      {/* Capture Preview Dialog */}
+      {capturePreview && (
+        <CapturePreviewDialog
+          open={true}
+          imageUrl={capturePreview.imageUrl}
+          timestamp={formatTimestamp(capturePreview.timestamp)}
+          resolution={{ width: capturePreview.width, height: capturePreview.height }}
+          saving={isSavingCapture}
+          onCancel={cancelCapturePreview}
+          onSave={saveCaptureToLibrary}
+        />
       )}
     </>
   );

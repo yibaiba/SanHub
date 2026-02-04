@@ -95,7 +95,7 @@ export default function VideoGenerationPage() {
       if (res.ok) {
         const data = await res.json();
         const images = (data.data || []).filter(
-          (g: Generation) => g.type.includes('image') || g.type === 'sora-image' || g.type === 'flow-image'
+          (g: Generation) => g.type.includes('image') || g.type === 'sora-image' || g.type === 'flow-image' || g.type === 'video-capture'
         );
         setImageLibrary(images);
       }

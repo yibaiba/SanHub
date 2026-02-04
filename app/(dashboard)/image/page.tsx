@@ -186,7 +186,7 @@ export default function ImageGenerationPage() {
         const data = await res.json();
         const images = (data.data || []).filter(
           (g: Generation) =>
-            g.type.includes('image')
+            g.type.includes('image') || g.type === 'video-capture'
         );
         setLibraryImages(images);
       }
