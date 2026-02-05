@@ -3154,12 +3154,13 @@ ${storyContext}
                     {/* Upload reference image for video - only when no connected image node */}
                     {node.type === 'video' && !incoming.some(e => nodes.find(n => n.id === e.from)?.type === 'image') && (() => {
                       const videoModel = model as SafeVideoModel;
-                      // Veo 模型: i2v=2张, r2v=3张; Sora 模型: 1张
-                      // 通过模型名称或 channelType 识别 Veo 模型
-                      const isVeoModel = videoModel?.channelType === 'gemini' ||
-                        videoModel?.name?.toLowerCase().includes('veo');
+                      // Veo 模型: i2v=2张, r2v/多图=3张; Sora 模型: 1张
+                      // 通过模型名称识别: "多图" 或 "融合" 关键词表示 r2v 模式
+                      const modelName = videoModel?.name?.toLowerCase() || '';
+                      const isVeoModel = videoModel?.channelType === 'gemini' || modelName.includes('veo');
+                      const isMultiImageMode = modelName.includes('多图') || modelName.includes('融合');
                       const maxImages = videoModel?.features?.maxReferenceImages ??
-                        (isVeoModel ? 2 : 1);
+                        (isVeoModel ? (isMultiImageMode ? 3 : 2) : 1);
                       const currentImages = node.data.uploadedImages || [];
                       return (
                       <div className="space-y-1">
