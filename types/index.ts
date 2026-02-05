@@ -1038,6 +1038,7 @@ export interface WorkspaceNode {
     status?: 'idle' | 'pending' | 'processing' | 'completed' | 'failed';
     errorMessage?: string;
     progress?: number; // 0-100 execution progress
+    progressMessage?: string; // Progress status message (e.g., "正在生成...")
 
     // Image/Video node fields
     modelId?: string;

@@ -42,9 +42,9 @@ export async function GET() {
         })
     );
 
-    // Merge with default templates (file templates override defaults with same id)
-    const fileIds = new Set(fileTemplates.map(t => t.id));
-    const defaultTemplates = PROMPT_TEMPLATES.filter(t => !fileIds.has(t.id));
+    // Merge with default templates (file templates override defaults with same name)
+    const fileNames = new Set(fileTemplates.map(t => t.name.toLowerCase()));
+    const defaultTemplates = PROMPT_TEMPLATES.filter(t => !fileNames.has(t.name.toLowerCase()));
     const templates = [...defaultTemplates, ...fileTemplates];
 
     return NextResponse.json({ success: true, data: templates });

@@ -22,6 +22,7 @@ import type { Generation, SafeImageModel, DailyLimitConfig } from '@/types';
 import { toast } from '@/components/ui/toaster';
 import type { Task } from '@/components/generator/result-gallery';
 import { getPollingInterval, shouldContinuePolling, isTransientError, getFriendlyErrorMessage } from '@/lib/polling-utils';
+import { formatImageError } from '@/lib/error-formatter';
 
 const ResultGallery = dynamic(
   () => import('@/components/generator/result-gallery').then((mod) => mod.ResultGallery),
@@ -111,51 +112,47 @@ export default function ImageGenerationPage() {
     return availableModels.find(m => m.id === selectedModelId) || availableModels[0];
   }, [availableModels, selectedModelId]);
 
-  // 加载模型列表
+  // 加载模型列表和每日使用量 - 并行加载
   useEffect(() => {
-    const loadModels = async () => {
+    const loadInitialData = async () => {
       try {
-        const res = await fetch('/api/image-models');
-        if (res.ok) {
-          const data = await res.json();
-          const models = data.data?.models || [];
-          setAvailableModels(models);
-          // 设置默认选中第一个模型
-          if (models.length > 0) {
-            setSelectedModelId((prev) => {
-              if (prev) return prev;
-              setAspectRatio(models[0].defaultAspectRatio);
-              if (models[0].defaultImageSize) {
-                setImageSize(models[0].defaultImageSize);
-              }
-              return models[0].id;
-            });
-          }
+        const [modelsRes, dailyUsageRes] = await Promise.all([
+          fetch('/api/image-models'),
+          fetch('/api/user/daily-usage'),
+        ]);
+
+        // 并行解析 JSON
+        const [modelsData, dailyUsageData] = await Promise.all([
+          modelsRes.ok ? modelsRes.json() : { data: { models: [] } },
+          dailyUsageRes.ok ? dailyUsageRes.json() : { data: { usage: null, limits: null } },
+        ]);
+
+        // 更新模型
+        const models = modelsData.data?.models || [];
+        setAvailableModels(models);
+        if (models.length > 0) {
+          setSelectedModelId((prev) => {
+            if (prev) return prev;
+            setAspectRatio(models[0].defaultAspectRatio);
+            if (models[0].defaultImageSize) {
+              setImageSize(models[0].defaultImageSize);
+            }
+            return models[0].id;
+          });
+        }
+
+        // 更新每日使用量
+        if (dailyUsageData.data) {
+          setDailyUsage(dailyUsageData.data.usage);
+          setDailyLimits(dailyUsageData.data.limits);
         }
       } catch (err) {
-        console.error('Failed to load models:', err);
+        console.error('Failed to load initial data:', err);
       } finally {
         setModelsLoaded(true);
       }
     };
-    loadModels();
-  }, []);
-
-  // 加载每日使用量
-  useEffect(() => {
-    const loadDailyUsage = async () => {
-      try {
-        const res = await fetch('/api/user/daily-usage');
-        if (res.ok) {
-          const data = await res.json();
-          setDailyUsage(data.data.usage);
-          setDailyLimits(data.data.limits);
-        }
-      } catch (err) {
-        console.error('Failed to load daily usage:', err);
-      }
-    };
-    loadDailyUsage();
+    loadInitialData();
   }, []);
 
   // 当模型改变时，重置参数到默认值
@@ -746,7 +743,8 @@ export default function ImageGenerationPage() {
         clearImages();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '生成失败');
+      const errorMessage = err instanceof Error ? err.message : '生成失败';
+      setError(formatImageError(errorMessage));
     } finally {
       setSubmitting(false);
     }
@@ -787,7 +785,8 @@ export default function ImageGenerationPage() {
         clearImages();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '生成失败');
+      const errorMessage = err instanceof Error ? err.message : '生成失败';
+      setError(formatImageError(errorMessage));
     } finally {
       setSubmitting(false);
     }

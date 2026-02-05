@@ -48,9 +48,9 @@ const isTaskVideoType = (type: string) => type?.includes('video');
 
 const TYPE_BADGE_MAP: Record<string, { label: string; icon: any }> = {
   'sora-video': { label: 'Sora 视频', icon: Video },
-  'flow-video': { label: 'Flow Video', icon: Video },
+  'flow-video': { label: 'Veo Video', icon: Video },
   'sora-image': { label: 'Sora 图像', icon: ImageIcon },
-  'flow-image': { label: 'Flow Image', icon: ImageIcon },
+  'flow-image': { label: 'Veo Image', icon: ImageIcon },
   'gemini-image': { label: 'Gemini', icon: Palette },
   'zimage-image': { label: 'Z-Image', icon: ImageIcon },
   'gitee-image': { label: 'Gitee', icon: ImageIcon },

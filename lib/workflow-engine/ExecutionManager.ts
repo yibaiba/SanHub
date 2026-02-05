@@ -155,6 +155,25 @@ export class ExecutionManager implements IExecutionManager {
           } else {
             failedNodes.add(nodeId);
             errors.push({ nodeId, error: e.message });
+
+            // 积分不足时暂停整个工作流
+            const errorMsg = (e.message || '').toLowerCase();
+            if (errorMsg.includes('余额不足') ||
+                errorMsg.includes('insufficient') ||
+                errorMsg.includes('balance')) {
+              // 取消所有待执行的节点
+              abortController.abort();
+              pendingQueue.forEach(pid => {
+                if (!completedNodes.has(pid) && !failedNodes.has(pid)) {
+                  cancelledNodes.add(pid);
+                  this.stateManager.setNodeState(workspaceId, pid, {
+                    status: 'cancelled',
+                    error: '因积分不足暂停'
+                  });
+                }
+              });
+              pendingQueue.length = 0; // 清空队列
+            }
           }
         } finally {
           activeCount--;

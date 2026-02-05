@@ -911,7 +911,7 @@ export default function VideoChannelsPage() {
                 <label key={f.key} className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={modelForm.features[f.key as keyof VideoModelFeatures]}
+                    checked={!!modelForm.features[f.key as keyof VideoModelFeatures]}
                     onChange={(e) => setModelForm({
                       ...modelForm,
                       features: { ...modelForm.features, [f.key]: e.target.checked }

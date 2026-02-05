@@ -22,6 +22,7 @@ import {
 import { cn, fileToBase64 } from '@/lib/utils';
 import { toast } from '@/components/ui/toaster';
 import { MagicWand } from '@/components/generator/MagicWand';
+import { formatVideoError } from '@/lib/error-formatter';
 import type { Task } from '@/components/generator/result-gallery';
 import type { Generation, CharacterCard, SafeVideoModel, DailyLimitConfig } from '@/types';
 
@@ -318,49 +319,53 @@ export default function VideoGenerationPage() {
     }
   }, [availableModels, videoEngine, veo3Mode]);
 
-  // 加载模型列表
+  // 加载模型列表、每日使用量、角色卡 - 并行加载
   useEffect(() => {
-    const loadModels = async () => {
+    const loadInitialData = async () => {
       try {
-        const res = await fetch('/api/video-models');
-        if (res.ok) {
-          const data = await res.json();
-          const models = data.data?.models || [];
-          setAvailableModels(models);
-          // 设置默认选中第一个模型
-          if (models.length > 0) {
-            setSelectedModelId((prev) => {
-              if (prev) return prev;
-              setAspectRatio(models[0].defaultAspectRatio);
-              setDuration(models[0].defaultDuration);
-              return models[0].id;
-            });
-          }
+        const [modelsRes, dailyUsageRes, characterCardsRes] = await Promise.all([
+          fetch('/api/video-models'),
+          fetch('/api/user/daily-usage'),
+          fetch('/api/user/character-cards'),
+        ]);
+
+        // 并行解析 JSON
+        const [modelsData, dailyUsageData, characterCardsData] = await Promise.all([
+          modelsRes.ok ? modelsRes.json() : { data: { models: [] } },
+          dailyUsageRes.ok ? dailyUsageRes.json() : { data: { usage: null, limits: null } },
+          characterCardsRes.ok ? characterCardsRes.json() : { data: [] },
+        ]);
+
+        // 更新模型
+        const models = modelsData.data?.models || [];
+        setAvailableModels(models);
+        if (models.length > 0) {
+          setSelectedModelId((prev) => {
+            if (prev) return prev;
+            setAspectRatio(models[0].defaultAspectRatio);
+            setDuration(models[0].defaultDuration);
+            return models[0].id;
+          });
         }
+
+        // 更新每日使用量
+        if (dailyUsageData.data) {
+          setDailyUsage(dailyUsageData.data.usage);
+          setDailyLimits(dailyUsageData.data.limits);
+        }
+
+        // 更新角色卡
+        const completedCards = (characterCardsData.data || []).filter(
+          (c: CharacterCard) => c.status === 'completed' && c.characterName
+        );
+        setCharacterCards(completedCards);
       } catch (err) {
-        console.error('Failed to load models:', err);
+        console.error('Failed to load initial data:', err);
       } finally {
         setModelsLoaded(true);
       }
     };
-    loadModels();
-  }, []);
-
-  // 加载每日使用量
-  useEffect(() => {
-    const loadDailyUsage = async () => {
-      try {
-        const res = await fetch('/api/user/daily-usage');
-        if (res.ok) {
-          const data = await res.json();
-          setDailyUsage(data.data.usage);
-          setDailyLimits(data.data.limits);
-        }
-      } catch (err) {
-        console.error('Failed to load daily usage:', err);
-      }
-    };
-    loadDailyUsage();
+    loadInitialData();
   }, []);
 
   // 当引擎类型或 Veo 模式改变时，自动选择第一个对应的模型
@@ -390,25 +395,6 @@ export default function VideoGenerationPage() {
       }
     }
   }, [selectedModelId, availableModels]);
-
-  // 加载用户角色卡
-  useEffect(() => {
-    const loadCharacterCards = async () => {
-      try {
-        const res = await fetch('/api/user/character-cards');
-        if (res.ok) {
-          const data = await res.json();
-          const completedCards = (data.data || []).filter(
-            (c: CharacterCard) => c.status === 'completed' && c.characterName
-          );
-          setCharacterCards(completedCards);
-        }
-      } catch (err) {
-        console.error('Failed to load character cards:', err);
-      }
-    };
-    loadCharacterCards();
-  }, []);
 
   // 处理提示词输入
   const handlePromptChange = (
@@ -1283,7 +1269,8 @@ export default function VideoGenerationPage() {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '生成失败');
+      const errorMessage = err instanceof Error ? err.message : '生成失败';
+      setError(formatVideoError(errorMessage));
     } finally {
       setSubmitting(false);
     }
@@ -1335,7 +1322,8 @@ export default function VideoGenerationPage() {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '生成失败');
+      const errorMessage = err instanceof Error ? err.message : '生成失败';
+      setError(formatVideoError(errorMessage));
     } finally {
       setSubmitting(false);
     }

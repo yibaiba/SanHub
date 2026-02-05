@@ -46,8 +46,36 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : '未命名工作空间';
+    let name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : '';
     const data = body.data;
+
+    // 如果没有提供名称或使用默认名称，自动生成带序号的名称
+    if (!name || name === '未命名工作空间') {
+      // 获取用户现有的工作空间，查找最大序号
+      const existingWorkspaces = await getWorkspaceSummaries(session.user.id, {
+        limit: 200,
+        sort: 'created',
+        order: 'desc',
+      });
+
+      // 查找所有 "未命名工作空间" 或 "未命名工作空间 (N)" 格式的名称
+      const pattern = /^未命名工作空间(?: \((\d+)\))?$/;
+      let maxNumber = 0;
+
+      for (const ws of existingWorkspaces) {
+        const match = ws.name.match(pattern);
+        if (match) {
+          const num = match[1] ? parseInt(match[1], 10) : 1;
+          if (num > maxNumber) {
+            maxNumber = num;
+          }
+        }
+      }
+
+      // 生成新名称
+      const nextNumber = maxNumber + 1;
+      name = nextNumber === 1 ? '未命名工作空间' : `未命名工作空间 (${nextNumber})`;
+    }
 
     const workspace = await createWorkspace(session.user.id, name, data);
 

@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { toast } from '@/components/ui/toaster';
 import { IMAGE_MODELS, VIDEO_MODELS, getImageModelById } from '@/lib/model-config';
 import type { WorkspaceNode, WorkspaceEdge, WorkspaceNodeType, ChatModel, StoryboardData, StoryboardScene } from '@/types';
+import { getInheritableParams, formatSyncMessage } from '../lib/param-inheritance';
 
 interface UseNodeOperationsOptions {
   nodes: WorkspaceNode[];
@@ -277,10 +278,26 @@ export function useNodeOperations({
           { id: `${fromNode.id}-${toNode.id}`, from: fromNode.id, to: toNode.id },
         ]);
       }
-      
+
+      // 智能参数继承：自动将上游节点的关键参数同步到下游节点
+      const inheritedParams = getInheritableParams(fromNode, toNode);
+      if (inheritedParams) {
+        setNodesDirty((prev) =>
+          prev.map((n) =>
+            n.id === toNode.id
+              ? { ...n, data: { ...n.data, ...inheritedParams.params } }
+              : n
+          )
+        );
+        const syncMsg = formatSyncMessage(inheritedParams.params);
+        if (syncMsg) {
+          toast({ title: syncMsg });
+        }
+      }
+
       setConnectingFrom(null);
     },
-    [nodes, edges, setEdgesDirty]
+    [nodes, edges, setEdgesDirty, setNodesDirty]
   );
 
   const duplicateNode = useCallback(

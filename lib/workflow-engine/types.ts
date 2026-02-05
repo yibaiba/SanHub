@@ -108,6 +108,44 @@ export interface ImportWarning {
 }
 
 // ========================================
+// Retry Configuration
+// ========================================
+
+export interface RetryConfig {
+  maxRetries: number;
+  backoffMs: number[];
+  retryableErrors: string[];
+  nonRetryableErrors: string[];
+}
+
+export const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  backoffMs: [2000, 5000, 10000],
+  retryableErrors: [
+    'TIMEOUT',
+    'NETWORK_ERROR',
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'RATE_LIMIT',
+    'fetch failed',
+    '502',
+    '503',
+    '504',
+    '429',
+  ],
+  nonRetryableErrors: [
+    'INSUFFICIENT_BALANCE',
+    '余额不足',
+    'insufficient balance',
+    'INVALID_PROMPT',
+    'CONTENT_POLICY',
+    '400',
+    '401',
+    '403',
+  ],
+};
+
+// ========================================
 // Interfaces
 // ========================================
 

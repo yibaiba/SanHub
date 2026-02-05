@@ -69,7 +69,7 @@ export function BaseNodeCard({
   const progressMessage = node.data.progressMessage || '';
   const errorMessage = node.data.errorMessage;
 
-  const isRunning = status === 'pending' || status === 'processing' || status === 'running';
+  const isRunning = status === 'pending' || status === 'processing';
   const isFailed = status === 'failed';
   const isCompleted = status === 'completed';
 

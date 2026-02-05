@@ -1,10 +1,110 @@
 import { WorkspaceNode, SafeImageModel, SafeVideoModel, ChatModel } from '@/types';
-import { NodeExecutionContext } from '@/lib/workflow-engine/types';
+import { NodeExecutionContext, RetryConfig, DEFAULT_RETRY_CONFIG } from '@/lib/workflow-engine/types';
 
 export interface ExecutionContext {
   imageModels: SafeImageModel[];
   videoModels: SafeVideoModel[];
   chatModels: ChatModel[];
+}
+
+// ========================================
+// 重试机制
+// ========================================
+
+/**
+ * 从错误消息中提取错误代码
+ */
+function extractErrorCode(error: Error): string {
+  const msg = (error.message || '').toLowerCase();
+
+  // 积分不足
+  if (msg.includes('余额不足') || msg.includes('insufficient') || msg.includes('balance')) {
+    return 'INSUFFICIENT_BALANCE';
+  }
+  // 网络超时
+  if (msg.includes('timeout') || msg.includes('timed out')) {
+    return 'TIMEOUT';
+  }
+  // 网络错误
+  if (msg.includes('fetch failed') || msg.includes('network') || msg.includes('econnreset')) {
+    return 'NETWORK_ERROR';
+  }
+  // HTTP 状态码
+  const statusMatch = msg.match(/\b(4\d{2}|5\d{2})\b/);
+  if (statusMatch) {
+    return statusMatch[1];
+  }
+
+  return msg;
+}
+
+/**
+ * 判断错误是否可重试
+ */
+function isRetryableError(error: Error, config: RetryConfig): boolean {
+  const errorCode = extractErrorCode(error);
+
+  // 先检查不可重试错误
+  if (config.nonRetryableErrors.some(e => errorCode.includes(e.toLowerCase()))) {
+    return false;
+  }
+
+  // 再检查可重试错误
+  return config.retryableErrors.some(e => errorCode.includes(e.toLowerCase()));
+}
+
+/**
+ * 判断是否为积分不足错误
+ */
+export function isInsufficientBalanceError(error: Error): boolean {
+  const msg = (error.message || '').toLowerCase();
+  return msg.includes('余额不足') ||
+         msg.includes('insufficient') ||
+         msg.includes('balance') ||
+         msg.includes('INSUFFICIENT_BALANCE');
+}
+
+/**
+ * 带重试的异步函数包装器
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  config: RetryConfig = DEFAULT_RETRY_CONFIG,
+  onRetry?: (attempt: number, error: Error) => void
+): Promise<T> {
+  let lastError: Error = new Error('Unknown error');
+
+  for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+
+      // AbortError 不重试
+      if (error.name === 'AbortError') {
+        throw error;
+      }
+
+      // 不可重试错误直接抛出
+      if (!isRetryableError(error, config)) {
+        throw error;
+      }
+
+      // 最后一次尝试失败
+      if (attempt === config.maxRetries) {
+        throw error;
+      }
+
+      // 回调通知
+      onRetry?.(attempt + 1, error);
+
+      // 等待退避时间
+      const backoffTime = config.backoffMs[attempt] || config.backoffMs[config.backoffMs.length - 1] || 10000;
+      await new Promise(r => setTimeout(r, backoffTime));
+    }
+  }
+
+  throw lastError;
 }
 
 export async function executeNodeAPI(
@@ -82,24 +182,34 @@ async function executeImageNode(
     }
   }
 
-  const res = await fetch('/api/generate/image', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      modelId: model.id,
-      prompt,
-      aspectRatio: node.data.aspectRatio || model.defaultAspectRatio,
-      imageSize: model.features.imageSize ? node.data.imageSize : undefined,
-      referenceImageUrl,
-      referenceImages,
-    }),
-    signal: execContext?.abortSignal,
-  });
+  // 使用重试包装器
+  const res = await withRetry(
+    async () => {
+      const response = await fetch('/api/generate/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelId: model.id,
+          prompt,
+          aspectRatio: node.data.aspectRatio || model.defaultAspectRatio,
+          imageSize: model.features.imageSize ? node.data.imageSize : undefined,
+          referenceImageUrl,
+          referenceImages,
+        }),
+        signal: execContext?.abortSignal,
+      });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Image generation failed');
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Image generation failed');
+      return data;
+    },
+    DEFAULT_RETRY_CONFIG,
+    (attempt) => {
+      execContext?.onProgress?.(0, `重试中 (${attempt}/${DEFAULT_RETRY_CONFIG.maxRetries})...`);
+    }
+  );
 
-  return pollTask(data.data.id, execContext);
+  return pollTask(res.data.id, execContext);
 }
 
 async function executeVideoNode(
@@ -115,23 +225,33 @@ async function executeVideoNode(
   const uploaded = node.data.uploadedImages || [];
   const referenceImageUrl = imageInputs[0] || uploaded[0];
 
-  const res = await fetch('/api/generate/sora', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      modelId: model.id,
-      prompt,
-      aspectRatio: node.data.aspectRatio || model.defaultAspectRatio,
-      duration: node.data.duration || model.defaultDuration,
-      referenceImageUrl,
-    }),
-    signal: execContext?.abortSignal,
-  });
+  // 使用重试包装器
+  const res = await withRetry(
+    async () => {
+      const response = await fetch('/api/generate/sora', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelId: model.id,
+          prompt,
+          aspectRatio: node.data.aspectRatio || model.defaultAspectRatio,
+          duration: node.data.duration || model.defaultDuration,
+          referenceImageUrl,
+        }),
+        signal: execContext?.abortSignal,
+      });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Video generation failed');
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Video generation failed');
+      return data;
+    },
+    DEFAULT_RETRY_CONFIG,
+    (attempt) => {
+      execContext?.onProgress?.(0, `重试中 (${attempt}/${DEFAULT_RETRY_CONFIG.maxRetries})...`);
+    }
+  );
 
-  return pollTask(data.data.id, execContext);
+  return pollTask(res.data.id, execContext);
 }
 
 async function executeChatNode(
@@ -141,19 +261,29 @@ async function executeChatNode(
   models: ChatModel[],
   execContext?: NodeExecutionContext
 ) {
-  const res = await fetch('/api/chat/workspace', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      modelId: node.data.chatModelId,
-      prompt,
-      images: imageInputs,
-    }),
-    signal: execContext?.abortSignal,
-  });
+  // 使用重试包装器
+  const data = await withRetry(
+    async () => {
+      const response = await fetch('/api/chat/workspace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelId: node.data.chatModelId,
+          prompt,
+          images: imageInputs,
+        }),
+        signal: execContext?.abortSignal,
+      });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Chat generation failed');
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Chat generation failed');
+      return result;
+    },
+    DEFAULT_RETRY_CONFIG,
+    (attempt) => {
+      execContext?.onProgress?.(0, `重试中 (${attempt}/${DEFAULT_RETRY_CONFIG.maxRetries})...`);
+    }
+  );
 
   return data.data.content;
 }

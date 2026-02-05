@@ -1,6 +1,17 @@
 'use client';
 
-import { Loader2, MousePointer2, ZoomIn, ZoomOut, Maximize2, RotateCcw, Save } from 'lucide-react';
+import {
+  Loader2,
+  MousePointer2,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  RotateCcw,
+  Save,
+  Play,
+  Square,
+  RefreshCw,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface WorkspaceToolbarProps {
@@ -14,6 +25,18 @@ interface WorkspaceToolbarProps {
   onZoomOut: () => void;
   onZoomFit: () => void;
   onZoomReset: () => void;
+  // 批量执行相关
+  onExecuteAll?: () => void;
+  onStopAll?: () => void;
+  onRetryAllFailed?: () => void;
+  isExecuting?: boolean;
+  pendingCount?: number;
+  runningCount?: number;
+  failedCount?: number;
+  completedCount?: number;
+  // 时间和成本估算
+  timeDisplay?: string;
+  costDisplay?: string;
 }
 
 export function WorkspaceToolbar({
@@ -27,7 +50,19 @@ export function WorkspaceToolbar({
   onZoomOut,
   onZoomFit,
   onZoomReset,
+  onExecuteAll,
+  onStopAll,
+  onRetryAllFailed,
+  isExecuting = false,
+  pendingCount = 0,
+  runningCount = 0,
+  failedCount = 0,
+  completedCount = 0,
+  timeDisplay,
+  costDisplay,
 }: WorkspaceToolbarProps) {
+  const hasNodes = pendingCount > 0 || runningCount > 0 || failedCount > 0 || completedCount > 0;
+
   return (
     <>
       {/* Header */}
@@ -39,19 +74,104 @@ export function WorkspaceToolbar({
             className="text-2xl font-light text-foreground bg-transparent border border-border/70 rounded-lg px-3 py-2 w-full max-w-md focus:outline-none focus:border-border"
           />
         </div>
-        <button
-          onClick={onSave}
-          disabled={!dirty || saving}
-          className={cn(
-            'inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition shrink-0',
-            dirty
-              ? 'bg-foreground text-background hover:bg-foreground/90'
-              : 'bg-card/70 text-foreground/40 cursor-not-allowed'
+
+        <div className="flex items-center gap-2">
+          {/* 批量执行按钮组 */}
+          {hasNodes && (
+            <div className="flex items-center gap-2 mr-4">
+              {/* 执行全部 / 停止 */}
+              {isExecuting ? (
+                <button
+                  onClick={onStopAll}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30"
+                >
+                  <Square className="w-4 h-4" />
+                  停止
+                  {runningCount > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 text-xs bg-red-500/30 rounded">
+                      {runningCount}
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={onExecuteAll}
+                  disabled={pendingCount === 0 && failedCount === 0}
+                  className={cn(
+                    'inline-flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition',
+                    pendingCount > 0 || failedCount > 0
+                      ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-500/30'
+                      : 'bg-card/70 text-foreground/40 cursor-not-allowed border border-border/50'
+                  )}
+                >
+                  <Play className="w-4 h-4" />
+                  执行全部
+                  {pendingCount > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 text-xs bg-green-500/30 rounded">
+                      {pendingCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {/* 重试失败 */}
+              {failedCount > 0 && !isExecuting && (
+                <button
+                  onClick={onRetryAllFailed}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 border border-amber-500/30"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  重试失败
+                  <span className="ml-1 px-1.5 py-0.5 text-xs bg-amber-500/30 rounded">
+                    {failedCount}
+                  </span>
+                </button>
+              )}
+
+              {/* 状态统计 */}
+              <div className="flex items-center gap-2 text-xs text-foreground/50 border-l border-border/50 pl-3 ml-1">
+                {completedCount > 0 && (
+                  <span className="text-green-400">✓ {completedCount}</span>
+                )}
+                {runningCount > 0 && (
+                  <span className="text-blue-400 flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    {runningCount}
+                  </span>
+                )}
+                {pendingCount > 0 && (
+                  <span className="text-foreground/40">待执行 {pendingCount}</span>
+                )}
+                {failedCount > 0 && (
+                  <span className="text-red-400">✗ {failedCount}</span>
+                )}
+              </div>
+
+              {/* 预估时间和成本 */}
+              {(timeDisplay || costDisplay) && (
+                <div className="flex items-center gap-2 text-xs text-foreground/40 border-l border-border/50 pl-3">
+                  {timeDisplay && <span>⏱ {timeDisplay}</span>}
+                  {costDisplay && <span>💰 {costDisplay}</span>}
+                </div>
+              )}
+            </div>
           )}
-        >
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          保存
-        </button>
+
+          {/* 保存按钮 */}
+          <button
+            onClick={onSave}
+            disabled={!dirty || saving}
+            className={cn(
+              'inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition shrink-0',
+              dirty
+                ? 'bg-foreground text-background hover:bg-foreground/90'
+                : 'bg-card/70 text-foreground/40 cursor-not-allowed'
+            )}
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            保存
+          </button>
+        </div>
       </div>
 
       {/* Canvas toolbar */}
@@ -95,4 +215,3 @@ export function WorkspaceToolbar({
     </>
   );
 }
-
