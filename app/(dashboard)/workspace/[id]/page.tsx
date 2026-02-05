@@ -10,9 +10,13 @@ import {
   StateManager,
   NodeExecutionState,
   WorkflowExporter,
-  WorkflowImporter
+  WorkflowImporter,
+  estimateWorkflow,
+  formatEstimate
 } from '@/lib/workflow-engine';
 import { useWorkflowEngine } from '@/components/workspace/hooks/useWorkflowEngine';
+import { useParamHighlight } from '@/components/workspace/hooks/useParamHighlight';
+import { getInheritableParams, formatSyncMessage } from '@/components/workspace/lib/param-inheritance';
 import {
   Check,
   CheckCircle2,
@@ -255,6 +259,27 @@ export default function WorkspaceEditorPage() {
   const nodesRef = useRef<WorkspaceNode[]>([]);
   const edgesRef = useRef<WorkspaceEdge[]>([]);
 
+  // 参数高亮 hook
+  const { highlightedNodes, triggerHighlight } = useParamHighlight();
+
+  // 节点状态统计
+  const nodeStatusCounts = useMemo(() => {
+    let pending = 0;
+    let running = 0;
+    let completed = 0;
+    let failed = 0;
+
+    for (const node of nodes) {
+      const status = node.data.status;
+      if (status === 'idle' || !status) pending++;
+      else if (status === 'pending' || status === 'processing') running++;
+      else if (status === 'completed') completed++;
+      else if (status === 'failed') failed++;
+    }
+
+    return { pending, running, completed, failed };
+  }, [nodes]);
+
   // Dynamic canvas size based on node positions
   const canvasSize = useMemo(() => {
     if (nodes.length === 0) {
@@ -356,77 +381,54 @@ export default function WorkspaceEditorPage() {
     }
   }, [workspaceId]);
 
+  // 并行加载所有静态数据（角色卡、模型、模板等）
   useEffect(() => {
-    const loadCharacterCards = async () => {
+    const loadStaticData = async () => {
       try {
-        const res = await fetch('/api/user/character-cards');
-        if (!res.ok) return;
-        const data = await res.json();
-        const completedCards = (data.data || []).filter(
+        const [
+          characterCardsRes,
+          chatModelsRes,
+          imageModelsRes,
+          videoModelsRes,
+          promptsRes,
+        ] = await Promise.all([
+          fetch('/api/user/character-cards'),
+          fetch('/api/chat/models'),
+          fetch('/api/image-models'),
+          fetch('/api/video-models'),
+          fetch('/api/prompts'),
+        ]);
+
+        // 并行解析 JSON
+        const [
+          characterCardsData,
+          chatModelsData,
+          imageModelsData,
+          videoModelsData,
+          promptsData,
+        ] = await Promise.all([
+          characterCardsRes.ok ? characterCardsRes.json() : { data: [] },
+          chatModelsRes.ok ? chatModelsRes.json() : { data: [] },
+          imageModelsRes.ok ? imageModelsRes.json() : { data: { models: [] } },
+          videoModelsRes.ok ? videoModelsRes.json() : { data: { models: [] } },
+          promptsRes.ok ? promptsRes.json() : { data: [] },
+        ]);
+
+        // 更新状态
+        const completedCards = (characterCardsData.data || []).filter(
           (card: CharacterCard) => card.status === 'completed' && card.characterName
         );
         setCharacterCards(completedCards);
+        setChatModels((chatModelsData.data || []).filter((m: ChatModel) => m.enabled));
+        setImageModels(imageModelsData.data?.models || []);
+        setVideoModels(videoModelsData.data?.models || []);
+        setPromptTemplates(promptsData.data || []);
       } catch (error) {
-        console.error('Failed to load character cards:', error);
+        console.error('Failed to load static data:', error);
       }
     };
-    loadCharacterCards();
-  }, []);
 
-  useEffect(() => {
-    const loadChatModels = async () => {
-      try {
-        const res = await fetch('/api/chat/models');
-        if (!res.ok) return;
-        const data = await res.json();
-        setChatModels((data.data || []).filter((m: ChatModel) => m.enabled));
-      } catch (error) {
-        console.error('Failed to load chat models:', error);
-      }
-    };
-    loadChatModels();
-  }, []);
-
-  useEffect(() => {
-    const loadImageModels = async () => {
-      try {
-        const res = await fetch('/api/image-models');
-        if (!res.ok) return;
-        const data = await res.json();
-        setImageModels(data.data?.models || []);
-      } catch (error) {
-        console.error('Failed to load image models:', error);
-      }
-    };
-    loadImageModels();
-  }, []);
-
-  useEffect(() => {
-    const loadVideoModels = async () => {
-      try {
-        const res = await fetch('/api/video-models');
-        if (!res.ok) return;
-        const data = await res.json();
-        setVideoModels(data.data?.models || []);
-      } catch (error) {
-        console.error('Failed to load video models:', error);
-      }
-    };
-    loadVideoModels();
-  }, []);
-
-  useEffect(() => {
-    const loadPromptTemplates = async () => {
-      try {
-        const res = await fetch('/api/prompts');
-        if (!res.ok) return;
-        const data = await res.json();
-        setPromptTemplates(data.data || []);
-      } catch (error) {
-        console.error('Failed to load prompt templates:', error);
-      }
-    };
-    loadPromptTemplates();
+    loadStaticData();
   }, []);
 
   useEffect(() => {
@@ -795,6 +797,29 @@ export default function WorkspaceEditorPage() {
         { id: `${fromNode.id}-${toNode.id}`, from: fromNode.id, to: toNode.id },
       ]);
     }
+
+    // 参数继承和高亮
+    const inheritResult = getInheritableParams(fromNode, toNode);
+    if (inheritResult) {
+      const { params, syncedParamNames } = inheritResult;
+      // 更新目标节点的参数
+      setNodesDirty((prev) =>
+        prev.map((node) =>
+          node.id === toNode.id
+            ? { ...node, data: { ...node.data, ...params } }
+            : node
+        )
+      );
+      // 触发参数高亮
+      if (syncedParamNames.length > 0) {
+        triggerHighlight(toNode.id, syncedParamNames);
+        const message = formatSyncMessage(params);
+        if (message) {
+          toast({ title: message });
+        }
+      }
+    }
+
     setConnectingFrom(null);
   };
 
@@ -879,6 +904,15 @@ export default function WorkspaceEditorPage() {
     chatModels,
     updateNodeData,
   });
+
+  // 工作流执行预估
+  const workflowEstimate = useMemo(() => {
+    return estimateWorkflow(nodes, edges);
+  }, [nodes, edges]);
+
+  const { timeDisplay, costDisplay, isEmpty: estimateEmpty } = useMemo(() => {
+    return formatEstimate(workflowEstimate);
+  }, [workflowEstimate]);
 
   const updateNode = (id: string, partial: Partial<WorkspaceNode>) => {
     setNodesDirty((prev) => prev.map((node) => (node.id === id ? { ...node, ...partial } : node)));
@@ -1690,27 +1724,49 @@ ${storyContext}
           ? nodesRef.current.find((n) => n.id === videoInputEdge.from && n.type === 'image')
           : undefined;
 
-        let referenceImageUrl = videoInputNode?.data.outputUrl;
-        if (!referenceImageUrl && node.data.uploadedImages && node.data.uploadedImages.length > 0) {
-          referenceImageUrl = node.data.uploadedImages[0];
+        // Collect reference images: from connected node or uploaded images
+        const referenceImages: string[] = [];
+        if (videoInputNode?.data.outputUrl) {
+          referenceImages.push(videoInputNode.data.outputUrl);
+        } else if (node.data.uploadedImages && node.data.uploadedImages.length > 0) {
+          // Support multiple uploaded images for Veo models
+          referenceImages.push(...node.data.uploadedImages);
         }
 
         // Auto-detect mode: Image-to-Video vs Text-to-Video
-        const isImg2Vid = !!referenceImageUrl;
+        const isImg2Vid = referenceImages.length > 0;
 
-        // 如果是 Veo 模型，可能需要特殊处理（假设都走统一接口，由 modelId 区分）
-        // 这里主要确保 prompt 和 referenceImageUrl 正确传递
+        // Build request body - use files array for multiple images, referenceImageUrl for single
+        const requestBody: Record<string, unknown> = {
+          modelId: model.id,
+          prompt: basePrompt,
+          aspectRatio: node.data.aspectRatio || model.defaultAspectRatio,
+          duration: node.data.duration || model.defaultDuration,
+        };
+
+        if (isImg2Vid) {
+          if (referenceImages.length === 1) {
+            // Single image: use referenceImageUrl for backward compatibility
+            requestBody.referenceImageUrl = referenceImages[0];
+          } else {
+            // Multiple images: convert to files array format
+            requestBody.files = referenceImages.map((img) => {
+              if (img.startsWith('data:')) {
+                const match = img.match(/^data:([^;]+);base64,(.+)$/);
+                if (match) {
+                  return { mimeType: match[1], data: match[2] };
+                }
+              }
+              // For URLs, they'll be fetched server-side
+              return { mimeType: 'image/jpeg', data: img };
+            });
+          }
+        }
 
         const res = await fetch('/api/generate/sora', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            modelId: model.id,
-            prompt: basePrompt,
-            aspectRatio: node.data.aspectRatio || model.defaultAspectRatio,
-            duration: node.data.duration || model.defaultDuration,
-            referenceImageUrl: isImg2Vid ? referenceImageUrl : undefined,
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         const data = await res.json();
@@ -2232,6 +2288,34 @@ ${storyContext}
           />
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
+          {/* 节点状态统计 */}
+          {nodes.length > 0 && (
+            <div className="hidden sm:flex items-center gap-2 text-xs text-foreground/50 mr-2 border-r border-border/50 pr-3">
+              {nodeStatusCounts.completed > 0 && (
+                <span className="text-green-400">✓ {nodeStatusCounts.completed}</span>
+              )}
+              {nodeStatusCounts.running > 0 && (
+                <span className="text-blue-400 flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  {nodeStatusCounts.running}
+                </span>
+              )}
+              {nodeStatusCounts.pending > 0 && (
+                <span className="text-foreground/40">待执行 {nodeStatusCounts.pending}</span>
+              )}
+              {nodeStatusCounts.failed > 0 && (
+                <span className="text-red-400">✗ {nodeStatusCounts.failed}</span>
+              )}
+            </div>
+          )}
+          {/* 执行预估显示 */}
+          {!estimateEmpty && !isExecuting && (
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-foreground/50 mr-2">
+              <span>{timeDisplay}</span>
+              <span className="text-foreground/30">·</span>
+              <span>{costDisplay}</span>
+            </div>
+          )}
           {!isExecuting ? (
             <button
               onClick={runWorkflow}
@@ -3069,22 +3153,33 @@ ${storyContext}
 
                     {/* Upload reference image for video - only when no connected image node */}
                     {/* Upload reference image for video - only when no connected image node */}
-                    {node.type === 'video' && !incoming.some(e => nodes.find(n => n.id === e.from)?.type === 'image') && (
+                    {node.type === 'video' && !incoming.some(e => nodes.find(n => n.id === e.from)?.type === 'image') && (() => {
+                      const videoModel = model as SafeVideoModel;
+                      // Veo (gemini) 模型: i2v=2张, r2v=3张; Sora 模型: 1张
+                      // 使用模型配置的 maxReferenceImages，否则根据 channelType 智能判断
+                      const maxImages = videoModel?.features?.maxReferenceImages ??
+                        (videoModel?.channelType === 'gemini' ? 2 : 1);
+                      const currentImages = node.data.uploadedImages || [];
+                      return (
                       <div className="space-y-1">
-                        <label className="text-[10px] uppercase tracking-wider text-foreground/40">参考图 (1张)</label>
+                        <label className="text-[10px] uppercase tracking-wider text-foreground/40">
+                          参考图 ({maxImages === 1 ? '1张' : `最多${maxImages}张`})
+                        </label>
                         <div className="flex flex-wrap gap-1">
-                          {(node.data.uploadedImages || []).slice(0, 1).map((img, idx) => (
+                          {currentImages.slice(0, maxImages).map((img, idx) => (
                             <div key={idx} className="relative group">
                               <img src={img} alt="" className="w-12 h-12 rounded object-cover border border-border/70" />
                               <button
-                                onClick={() => updateNodeData(node.id, { uploadedImages: [] })}
+                                onClick={() => updateNodeData(node.id, {
+                                  uploadedImages: currentImages.filter((_, i) => i !== idx)
+                                })}
                                 className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-foreground text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
                               >
                                 ×
                               </button>
                             </div>
                           ))}
-                          {(!node.data.uploadedImages || node.data.uploadedImages.length === 0) && (
+                          {currentImages.length < maxImages && (
                             <label className="w-12 h-12 rounded border border-dashed border-border/70 flex items-center justify-center cursor-pointer hover:border-border transition">
                               <input
                                 type="file"
@@ -3098,7 +3193,9 @@ ${storyContext}
                                     reader.onload = () => resolve(reader.result as string);
                                     reader.readAsDataURL(file);
                                   });
-                                  updateNodeData(node.id, { uploadedImages: [base64] });
+                                  updateNodeData(node.id, {
+                                    uploadedImages: [...currentImages, base64].slice(0, maxImages)
+                                  });
                                   e.target.value = '';
                                 }}
                               />
@@ -3107,7 +3204,8 @@ ${storyContext}
                           )}
                         </div>
                       </div>
-                    )}
+                      );
+                    })()}
 
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase tracking-wider text-foreground/40">提示词</label>

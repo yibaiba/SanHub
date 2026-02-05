@@ -262,6 +262,7 @@ export interface VideoModelFeatures {
   imageToVideo: boolean;     // 图生视频
   videoToVideo: boolean;     // 视频转视频
   supportStyles: boolean;    // 支持风格选择
+  maxReferenceImages?: number; // 最大参考图数量 (Veo i2v=2, r2v=3; Sora=1)
 }
 
 // 视频渠道配置

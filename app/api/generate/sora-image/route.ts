@@ -25,6 +25,20 @@ async function fetchImageAsBase64(
   imageUrl: string,
   origin: string
 ): Promise<{ mimeType: string; data: string }> {
+  // Handle base64 data URL (from local upload in workspace)
+  if (imageUrl.startsWith('data:')) {
+    const match = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) {
+      throw new Error('Invalid data URL format');
+    }
+    const [, mimeType, data] = match;
+    if (!mimeType.startsWith('image/')) {
+      throw new Error('Unsupported reference image content type');
+    }
+    console.log(`[fetchImageAsBase64] Parsed base64 data URL, mimeType: ${mimeType}`);
+    return { mimeType, data };
+  }
+
   const { buffer, contentType } = await fetchExternalBuffer(imageUrl, {
     origin,
     allowRelative: true,
