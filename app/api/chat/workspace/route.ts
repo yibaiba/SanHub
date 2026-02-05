@@ -11,6 +11,56 @@ const MAX_IMAGES = 10;
 const MAX_IMAGE_URL_LENGTH = 100000; // ~100KB for base64 data URLs
 const MAX_HISTORY_MESSAGES = 20; // Max conversation history
 
+/**
+ * Convert image URL to valid base64 data URL for Chat API
+ * Handles: http/https URLs, existing data URLs, and filters invalid formats
+ */
+async function prepareImageForChat(imageUrl: string): Promise<string | null> {
+  // Skip invalid URLs (blob URLs, empty, etc.)
+  if (!imageUrl || imageUrl.startsWith('blob:')) {
+    console.warn('[Chat] Skipping invalid image URL:', imageUrl.substring(0, 50));
+    return null;
+  }
+
+  // Already a valid data URL - validate format
+  if (imageUrl.startsWith('data:')) {
+    const match = imageUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
+    if (!match) {
+      console.warn('[Chat] Invalid data URL format');
+      return null;
+    }
+    return imageUrl;
+  }
+
+  // HTTP/HTTPS URL - fetch and convert to base64
+  if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+    try {
+      const response = await fetch(imageUrl);
+      if (!response.ok) {
+        console.warn('[Chat] Failed to fetch image:', response.status);
+        return null;
+      }
+
+      const contentType = response.headers.get('content-type') || 'image/jpeg';
+      if (!contentType.startsWith('image/')) {
+        console.warn('[Chat] URL is not an image:', contentType);
+        return null;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const base64 = Buffer.from(arrayBuffer).toString('base64');
+      return `data:${contentType};base64,${base64}`;
+    } catch (error) {
+      console.error('[Chat] Error fetching image:', error);
+      return null;
+    }
+  }
+
+  // Unknown format
+  console.warn('[Chat] Unknown image URL format:', imageUrl.substring(0, 50));
+  return null;
+}
+
 // Try to parse storyboard JSON from AI response
 function tryParseStoryboard(text: string): StoryboardData | null {
   try {
@@ -179,19 +229,28 @@ export async function POST(request: NextRequest) {
 
     // Add current user message
     if (images && images.length > 0 && model.supportsVision) {
-      // Vision model with images
+      // Vision model with images - prepare and validate each image
       const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
         { type: 'text', text: prompt },
       ];
 
       for (const imageUrl of images) {
-        content.push({
-          type: 'image_url',
-          image_url: { url: imageUrl },
-        });
+        const preparedUrl = await prepareImageForChat(imageUrl);
+        if (preparedUrl) {
+          content.push({
+            type: 'image_url',
+            image_url: { url: preparedUrl },
+          });
+        }
       }
 
-      messages.push({ role: 'user', content });
+      // Only use vision format if we have valid images
+      if (content.length > 1) {
+        messages.push({ role: 'user', content });
+      } else {
+        // No valid images, fall back to text-only
+        messages.push({ role: 'user', content: prompt });
+      }
     } else {
       // Text-only message
       messages.push({ role: 'user', content: prompt });
