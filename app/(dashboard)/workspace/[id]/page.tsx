@@ -2394,7 +2394,7 @@ ${storyContext}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 px-4 py-3 border-b border-border/70 text-foreground/60 text-sm">
           <div className="hidden sm:flex items-center gap-3">
             <MousePointer2 className="w-4 h-4" />
-            右键添加节点，拖拽布局，点击节点右侧圆点开始连线（Alt/Option + 滚轮缩放）
+            右键添加节点，拖拽布局，点击节点右侧圆点开始连线（Alt/Option + 滚轮缩放，双击删除连接线）
           </div>
           <div className="sm:hidden text-xs text-foreground/50">
             Tap + to add nodes. Drag to move. Use the bottom bar to zoom.
