@@ -2467,14 +2467,30 @@ ${storyContext}
               }}
             >
               <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                {/* 渲染连接线 */}
                 {edgePaths.map((edge) => (
-                  <path
-                    key={edge.id}
-                    d={edge.d}
-                    stroke="rgba(255,255,255,0.4)"
-                    strokeWidth="2"
-                    fill="none"
-                  />
+                  <g key={edge.id} className="pointer-events-auto group cursor-pointer">
+                    {/* 透明粗线：用于增加点击区域 */}
+                    <path
+                      d={edge.d}
+                      stroke="transparent"
+                      strokeWidth="20"
+                      fill="none"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        removeEdge(edge.id);
+                        toast({ title: '连接已断开' });
+                      }}
+                    />
+                    {/* 可视细线：实际显示的线条 */}
+                    <path
+                      d={edge.d}
+                      stroke="rgba(255,255,255,0.4)"
+                      strokeWidth="2"
+                      fill="none"
+                      className="transition-colors duration-200 group-hover:stroke-red-500/80 group-hover:stroke-[3px]"
+                    />
+                  </g>
                 ))}
                 {previewPath && (
                   <path
