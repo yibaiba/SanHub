@@ -2094,6 +2094,8 @@ ${storyContext}
             modelId: targetImageModel.id,
             aspectRatio: '16:9',
             status: 'idle',
+            // 传递源图片作为参考图，用于图生图模式
+            uploadedImages: sourceNode.data.outputUrl ? [sourceNode.data.outputUrl] : [],
           },
         };
 
