@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { signIn, useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Loader2, ArrowRight, Sparkles } from 'lucide-react';
+import { Loader2, ArrowRight, Sparkles, Check } from 'lucide-react';
 import { Captcha } from '@/components/ui/captcha';
 import { AnimatedBackground } from '@/components/ui/animated-background';
 import { useSiteConfig } from '@/components/providers/site-config-provider';
@@ -15,6 +15,7 @@ export default function LoginPage() {
   const siteConfig = useSiteConfig();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [captchaId, setCaptchaId] = useState('');
   const [captchaCode, setCaptchaCode] = useState('');
   const [captchaKey, setCaptchaKey] = useState(0);
@@ -27,6 +28,15 @@ export default function LoginPage() {
       window.location.href = '/image';
     }
   }, [status, session]);
+
+  // Load saved email
+  useEffect(() => {
+    const savedEmail = localStorage.getItem('rememberedEmail');
+    if (savedEmail) {
+      setEmail(savedEmail);
+      setRememberMe(true);
+    }
+  }, []);
 
   const handleCaptchaChange = useCallback((id: string, code: string) => {
     setCaptchaId(id);
@@ -89,6 +99,13 @@ export default function LoginPage() {
         setError(result.error);
         setCaptchaKey(k => k + 1);
       } else if (result?.ok) {
+        // Handle remember me
+        if (rememberMe) {
+          localStorage.setItem('rememberedEmail', email);
+        } else {
+          localStorage.removeItem('rememberedEmail');
+        }
+
         // Use window.location for full page navigation to ensure cookies are sent
         window.location.href = '/image';
       }
@@ -143,6 +160,24 @@ export default function LoginPage() {
                 required
                 className="w-full px-4 py-3 bg-input/70 border border-border/70 rounded-lg text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 transition-colors text-sm"
               />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${rememberMe ? 'bg-primary border-primary' : 'border-border/70 bg-input/30 group-hover:border-foreground/40'}`}>
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="hidden"
+                  />
+                  {rememberMe && <Check className="w-3 h-3 text-primary-foreground" />}
+                </div>
+                <span className="text-sm text-foreground/60 group-hover:text-foreground/80 transition-colors">记住我</span>
+              </label>
+              <Link href="/forgot-password" className="text-sm text-foreground/40 hover:text-foreground/60 transition-colors">
+                忘记密码？
+              </Link>
             </div>
 
             <Captcha key={captchaKey} onCaptchaChange={handleCaptchaChange} />
