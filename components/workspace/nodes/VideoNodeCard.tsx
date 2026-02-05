@@ -188,9 +188,12 @@ export function VideoNodeCard({
 
       {/* Upload Reference Image - only when no connected image node */}
       {!hasImageInput && (() => {
-        // Veo (gemini) 模型: i2v=2张, r2v=3张; Sora 模型: 1张
+        // Veo 模型: i2v=2张, r2v=3张; Sora 模型: 1张
+        // 通过模型名称或 channelType 识别 Veo 模型
+        const isVeoModel = model?.channelType === 'gemini' ||
+          model?.name?.toLowerCase().includes('veo');
         const maxImages = model?.features?.maxReferenceImages ??
-          (model?.channelType === 'gemini' ? 2 : 1);
+          (isVeoModel ? 2 : 1);
         const currentImages = node.data.uploadedImages || [];
         return (
         <div className="space-y-1">
