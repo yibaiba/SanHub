@@ -86,8 +86,18 @@ graph TD
 - **构建生产**: `npm run build` && `npm start`
 
 ## 5. 变更记录 (Changelog)
+- **2026-02-03**:
+  - 添加 Frontend Design Skill (`.claude/skills/frontend-design.md`)
+  - 添加12星座喜好分镜模板 (`data/prompts/12星座喜好分镜.txt`)
+  - 添加12星座工作流预设 (`lib/workflow-templates.ts`)
 - **2026-01-24**:
   - 深度扫描 `lib/sora-api.ts`，完善 API 封装逻辑文档。
   - 明确 `app/admin` 的鉴权机制 (Role & Real-time Session)。
   - 标记 `app/gallery` 为重定向存根模块。
 - **2026-01-24 (Previous)**: 深度扫描 Workspace 模块；完善 Video 模块 API 实现细节。
+
+## 6. Skills 参考
+| Skill | 路径 | 用途 |
+|:---|:---|:---|
+| Frontend Design | `.claude/skills/frontend-design.md` | 创建独特、生产级的前端界面，避免通用 AI 美学 |
+| UI/UX Pro Max | `.claude/skills/ui-ux-pro-max.md` | 全面设计指南：50+风格、97配色、57字体、99 UX规则 |

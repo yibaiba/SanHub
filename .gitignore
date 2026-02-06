@@ -8,6 +8,11 @@ node_modules/
 .pnp.js
 .kiro/*
 .spec-workflow
+.claude/
+.serena/
+.zcf/
+scripts/
+openspec/
 
 # ===================
 # Build & Output

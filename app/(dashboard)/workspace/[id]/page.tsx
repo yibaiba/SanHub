@@ -62,6 +62,7 @@ import { StoryboardSplitter, SliceData } from '@/components/workspace/Storyboard
 import { parseCinematicStoryboard, isCinematicFormat } from '@/lib/storyboard-parser';
 import { uploadSlicesWithProgress } from '@/lib/slice-upload';
 import { batchUpscaleWithFallback } from '@/lib/batch-upscale';
+import { formatGenerationError } from '@/lib/error-formatter';
 
 interface PromptTemplate {
   id: string;
@@ -1558,7 +1559,7 @@ ${storyContext}
           } else if (status === 'failed') {
             updateNodeData(nodeId, {
               status: 'failed',
-              errorMessage: data.data.errorMessage || '生成失败',
+              errorMessage: formatGenerationError(data.data.errorMessage || '生成失败'),
             });
             abortControllersRef.current.delete(nodeId);
           } else {
@@ -1586,7 +1587,7 @@ ${storyContext}
           }
           updateNodeData(nodeId, {
             status: 'failed',
-            errorMessage: errMsg,
+            errorMessage: formatGenerationError(errMsg),
           });
           abortControllersRef.current.delete(nodeId);
         }
@@ -1714,7 +1715,7 @@ ${storyContext}
         
         const model = videoModels.find(m => m.id === node.data.modelId) || videoModels[0];
         if (!model) {
-          updateNodeData(node.id, { errorMessage: 'No video model available', status: 'failed' });
+          updateNodeData(node.id, { errorMessage: '无可用视频模型', status: 'failed' });
           return;
         }
 
@@ -1779,7 +1780,7 @@ ${storyContext}
     } catch (error) {
       updateNodeData(node.id, {
         status: 'failed',
-        errorMessage: error instanceof Error ? error.message : '生成失败',
+        errorMessage: formatGenerationError(error instanceof Error ? error : '生成失败'),
       });
     }
   }, [imageModels, pollTaskStatus, updateNodeData, videoModels]);
@@ -1880,7 +1881,7 @@ ${storyContext}
     } catch (error) {
       updateNodeData(node.id, {
         status: 'failed',
-        errorMessage: error instanceof Error ? error.message : '聊天失败',
+        errorMessage: formatGenerationError(error instanceof Error ? error : '聊天失败', 'chat'),
       });
     }
   };
@@ -2228,7 +2229,7 @@ ${storyContext}
       } catch (error) {
         updateNodeData(node.id, {
           status: 'failed',
-          errorMessage: error instanceof Error ? error.message : '上游节点生成失败',
+          errorMessage: formatGenerationError(error instanceof Error ? error : '上游节点生成失败'),
         });
         return;
       }
