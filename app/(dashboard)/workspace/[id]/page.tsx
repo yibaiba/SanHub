@@ -2616,7 +2616,9 @@ ${storyContext}
 
                   <div className="p-3 space-y-3 text-xs text-foreground/70">
                     {/* Prompt Template Node */}
-                    {node.type === 'prompt-template' && (
+                    {node.type === 'prompt-template' && (() => {
+                      const isCustomMode = node.data.templateId === '__custom__';
+                      return (
                       <>
                         <div className="absolute top-2 right-12">
                           <button
@@ -2628,43 +2630,112 @@ ${storyContext}
                             <Copy className="w-4 h-4" />
                           </button>
                         </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] uppercase tracking-wider text-foreground/40">模板</label>
-                          <div className="relative">
-                            <select
-                              value={node.data.templateId || ''}
-                              onChange={(e) => {
-                                const template = promptTemplates.find((t) => t.id === e.target.value);
-                                updateNodeData(node.id, {
-                                  templateId: e.target.value,
-                                  templateOutput: template?.content || '',
-                                });
-                              }}
-                              className="w-full px-2 py-2 bg-card/60 border border-border/70 rounded-lg text-foreground focus:outline-none focus:border-border"
-                            >
-                              <option value="" className="bg-card/95">选择模板...</option>
-                              {promptTemplates.map((template) => (
-                                <option key={template.id} value={template.id} className="bg-card/95">
-                                  {template.name}
-                                </option>
-                              ))}
-                            </select>
-                            <ChevronDown className="w-3 h-3 text-foreground/30 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                          </div>
+
+                        {/* Mode Toggle */}
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => updateNodeData(node.id, {
+                              templateId: '',
+                              templateOutput: '',
+                              status: 'idle',
+                            })}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[10px] transition ${
+                              !isCustomMode
+                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                : 'bg-card/40 text-foreground/50 border border-border/50 hover:text-foreground/70'
+                            }`}
+                          >
+                            预设模板
+                          </button>
+                          <button
+                            onClick={() => updateNodeData(node.id, {
+                              templateId: '__custom__',
+                              templateOutput: node.data.templateOutput || '',
+                              status: node.data.templateOutput ? 'completed' : 'idle',
+                            })}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[10px] transition ${
+                              isCustomMode
+                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                : 'bg-card/40 text-foreground/50 border border-border/50 hover:text-foreground/70'
+                            }`}
+                          >
+                            自定义
+                          </button>
                         </div>
-                        {promptTemplates.length === 0 && (
-                          <div className="text-[10px] text-foreground/40">
-                            暂无模板，请在 data/prompts 目录添加 .txt 文件
+
+                        {/* Template Mode: Selector */}
+                        {!isCustomMode && (
+                          <>
+                            <div className="space-y-1">
+                              <label className="text-[10px] uppercase tracking-wider text-foreground/40">模板</label>
+                              <div className="relative">
+                                <select
+                                  value={node.data.templateId || ''}
+                                  onChange={(e) => {
+                                    const template = promptTemplates.find((t) => t.id === e.target.value);
+                                    updateNodeData(node.id, {
+                                      templateId: e.target.value,
+                                      templateOutput: template?.content || '',
+                                      status: template ? 'completed' : 'idle',
+                                    });
+                                  }}
+                                  className="w-full px-2 py-2 bg-card/60 border border-border/70 rounded-lg text-foreground focus:outline-none focus:border-border"
+                                >
+                                  <option value="" className="bg-card/95">选择模板...</option>
+                                  {promptTemplates.map((template) => (
+                                    <option key={template.id} value={template.id} className="bg-card/95">
+                                      {template.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <ChevronDown className="w-3 h-3 text-foreground/30 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                              </div>
+                            </div>
+                            {promptTemplates.length === 0 && (
+                              <div className="text-[10px] text-foreground/40">
+                                暂无模板，请在 data/prompts 目录添加 .txt 文件
+                              </div>
+                            )}
+                            {node.data.templateOutput && (
+                              <div className="space-y-1">
+                                <label className="text-[10px] uppercase tracking-wider text-foreground/40">模板内容</label>
+                                <div className="text-[10px] text-foreground/60 bg-card/60 rounded-lg px-2 py-1.5 max-h-32 overflow-auto whitespace-pre-wrap border border-border/50">
+                                  {node.data.templateOutput.slice(0, 500)}
+                                  {node.data.templateOutput.length > 500 && '...'}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        {/* Custom Mode: Editable Textarea */}
+                        {isCustomMode && (
+                          <div className="space-y-1">
+                            <label className="text-[10px] uppercase tracking-wider text-foreground/40">自定义提示词</label>
+                            <textarea
+                              value={node.data.templateOutput || ''}
+                              onChange={(e) => updateNodeData(node.id, {
+                                templateOutput: e.target.value,
+                                status: e.target.value.trim() ? 'completed' : 'idle',
+                              })}
+                              placeholder="输入提示词，连接到视频/图片节点后自动使用..."
+                              className="w-full h-28 px-2 py-2 bg-card/60 border border-border/70 rounded-lg text-foreground text-xs resize-none focus:outline-none focus:border-border"
+                            />
                           </div>
                         )}
-                        <div className="space-y-1">
-                          <label className="text-[10px] uppercase tracking-wider text-foreground/40">输出内容</label>
-                          <div className="text-[10px] text-foreground/60 bg-card/60 rounded-lg px-2 py-1.5 max-h-32 overflow-auto whitespace-pre-wrap">
-                            {node.data.templateOutput || '选择模板后显示内容'}
+
+                        {/* Status Indicator */}
+                        {node.data.templateOutput && node.data.status === 'completed' && (
+                          <div className="flex items-center gap-1 text-[10px] text-green-400">
+                            <Check className="w-3 h-3" />
+                            {isCustomMode ? '提示词已就绪' : '模板已加载'}
                           </div>
-                        </div>
+                        )}
                       </>
-                    )}
+                      );
+                    })()}
 
                     {/* Chat Node */}
                     {node.type === 'chat' && (
