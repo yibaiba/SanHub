@@ -1168,6 +1168,10 @@ export default function VideoGenerationPage() {
         }
         break;
       default:
+        // Veo 图生视频/图片融合模式必须上传图片
+        if (videoEngine === 'veo' && (veo3Mode === 'i2v' || veo3Mode === 'r2v') && files.length === 0) {
+          return veo3Mode === 'i2v' ? '图生视频模式需要上传至少 1 张图片' : '图片融合模式需要上传至少 1 张图片';
+        }
         if (!prompt.trim() && files.length === 0) return '请输入提示词或上传参考素材';
     }
     return null;

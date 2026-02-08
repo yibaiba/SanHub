@@ -1711,8 +1711,7 @@ ${storyContext}
           updateNodeData(node.id, { errorMessage: '请输入提示词', status: 'failed' });
           return;
         }
-        updateNodeData(node.id, { status: 'pending', errorMessage: undefined });
-        
+
         const model = videoModels.find(m => m.id === node.data.modelId) || videoModels[0];
         if (!model) {
           updateNodeData(node.id, { errorMessage: '无可用视频模型', status: 'failed' });
@@ -1733,6 +1732,16 @@ ${storyContext}
           // Support multiple uploaded images for Veo models
           referenceImages.push(...node.data.uploadedImages);
         }
+
+        // Veo 图生视频/融合模型必须有参考图
+        const modelName = model.name?.toLowerCase() || '';
+        const isVeoImageRequired = modelName.includes('图生视频') || modelName.includes('多图') || modelName.includes('融合');
+        if (isVeoImageRequired && referenceImages.length === 0) {
+          updateNodeData(node.id, { errorMessage: '该模型需要上传至少 1 张参考图片', status: 'failed' });
+          return;
+        }
+
+        updateNodeData(node.id, { status: 'pending', errorMessage: undefined });
 
         // Auto-detect mode: Image-to-Video vs Text-to-Video
         const isImg2Vid = referenceImages.length > 0;
