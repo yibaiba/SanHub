@@ -37,6 +37,15 @@ interface ResultGalleryProps {
   onDeleteGeneration?: (generationId: string) => void;
 }
 
+function getDisplayCost(gen: Pick<Generation, 'cost' | 'status' | 'balancePrecharged' | 'balanceRefunded'>): number {
+  const cost = Number(gen.cost) || 0;
+  if (cost <= 0) return 0;
+  if (gen.balancePrecharged === false) return 0;
+  if (gen.balanceRefunded) return 0;
+  if (gen.status === 'failed' || gen.status === 'cancelled') return 0;
+  return cost;
+}
+
 export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestoreParams, onRestoreTaskParams, onLoadMore, hasMore = false, loading = false, onDeleteGeneration }: ResultGalleryProps) {
   const [selected, setSelected] = useState<Generation | null>(null);
   const [visibleCount, setVisibleCount] = useState(12);
@@ -633,7 +642,7 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
                 <div className="min-w-0">
                   <p className="text-foreground text-sm leading-relaxed">{truncate(selected.prompt || '无提示词', 150)}</p>
                   <p className="text-foreground/40 text-xs mt-2">
-                    {formatDate(selected.createdAt)} · 消耗 {selected.cost} 积分
+                    {formatDate(selected.createdAt)} · 消耗 {getDisplayCost(selected)} 积分
                     {(realResolution || selected.params?.imageSize || selected.params?.size || selected.params?.aspectRatio) && (
                       <> · {realResolution || selected.params.imageSize || selected.params.size || selected.params.aspectRatio}</>
                     )}

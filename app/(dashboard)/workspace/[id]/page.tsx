@@ -1544,11 +1544,13 @@ ${storyContext}
           // Reset error counter on success
           consecutiveErrors = 0;
           const status = data.data.status as string;
-          if (status === 'completed') {
-            await update();
+          const resultUrl = typeof data.data.url === 'string' ? data.data.url : '';
+          const isCompletedStatus = status === 'completed' || status === 'succeeded';
+          if (isCompletedStatus && resultUrl) {
+            await update().catch(() => {});
             updateNodeData(nodeId, {
               status: 'completed',
-              outputUrl: data.data.url,
+              outputUrl: resultUrl,
               outputType: data.data.type?.includes('video') ? 'video' : 'image',
               generationId: data.data.id,
               revisedPrompt: data.data.params?.revised_prompt,
@@ -1556,12 +1558,19 @@ ${storyContext}
             });
             abortControllersRef.current.delete(nodeId);
             toast({ title: '生成完成' });
-          } else if (status === 'failed') {
+          } else if (status === 'failed' || status === 'cancelled') {
+            await update().catch(() => {});
             updateNodeData(nodeId, {
               status: 'failed',
               errorMessage: formatGenerationError(data.data.errorMessage || '生成失败'),
             });
             abortControllersRef.current.delete(nodeId);
+          } else if (isCompletedStatus && !resultUrl) {
+            updateNodeData(nodeId, {
+              status: 'processing',
+              errorMessage: undefined,
+            });
+            setTimeout(poll, 10000);
           } else {
             updateNodeData(nodeId, { status: status as WorkspaceNode['data']['status'] });
             setTimeout(poll, 10000);

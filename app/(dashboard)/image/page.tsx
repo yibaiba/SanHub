@@ -350,6 +350,7 @@ export default function ImageGenerationPage() {
           const isCompletedStatus = status === 'completed' || status === 'succeeded';
 
           if (status === 'failed' || status === 'cancelled') {
+            await update().catch(() => {});
             setTasks((prev) =>
               prev.map((t) =>
                 t.id === taskId
@@ -362,8 +363,8 @@ export default function ImageGenerationPage() {
               )
             );
             abortControllersRef.current.delete(taskId);
-          } else if (isCompletedStatus || rawUrl) {
-            await update();
+          } else if (isCompletedStatus && rawUrl) {
+            await update().catch(() => {});
 
             const generation: Generation = {
               id: data.data.id,

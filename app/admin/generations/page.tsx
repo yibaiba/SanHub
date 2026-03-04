@@ -20,6 +20,8 @@ interface GenerationRecord {
   resultUrl: string;
   cost: number;
   status: string;
+  balancePrecharged?: boolean;
+  balanceRefunded?: boolean;
   createdAt: number;
 }
 
@@ -71,6 +73,15 @@ function getRecordTypeLabel(record: GenerationRecord): string {
   }
 
   return TYPE_LABELS[record.type] || record.type;
+}
+
+function getDisplayCost(record: GenerationRecord): number {
+  const cost = Number(record.cost) || 0;
+  if (cost <= 0) return 0;
+  if (record.balancePrecharged === false) return 0;
+  if (record.balanceRefunded) return 0;
+  if (record.status === 'failed' || record.status === 'cancelled') return 0;
+  return cost;
 }
 
 export default function GenerationsPage() {
@@ -228,7 +239,14 @@ export default function GenerationsPage() {
                   <td className="px-5 py-4 text-center">
                     <StatusBadge status={record.status} />
                   </td>
-                  <td className="px-5 py-4 text-right text-red-400">-{record.cost}</td>
+                  <td
+                    className={cn(
+                      'px-5 py-4 text-right',
+                      getDisplayCost(record) > 0 ? 'text-red-400' : 'text-foreground/50'
+                    )}
+                  >
+                    {getDisplayCost(record) > 0 ? `-${getDisplayCost(record)}` : '0'}
+                  </td>
                   <td className="px-5 py-4 text-right text-foreground/50 text-sm">
                     {formatDate(record.createdAt)}
                   </td>

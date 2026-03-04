@@ -742,6 +742,8 @@ export async function getAllGenerations(options: {
     resultUrl: row.result_url,
     cost: row.cost,
     status: row.status || 'completed',
+    balancePrecharged: Boolean(row.balance_precharged),
+    balanceRefunded: Boolean(row.balance_refunded),
     errorMessage: row.error_message,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at || row.created_at),

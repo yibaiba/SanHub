@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { User, Key, LogOut, Loader2, Check, Mail, Shield, Coins, Gift, UserPlus, Copy, Ticket } from 'lucide-react';
 import { toast } from '@/components/ui/toaster';
@@ -8,6 +8,7 @@ import { formatBalance } from '@/lib/utils';
 
 export default function SettingsPage() {
   const { data: session, update: updateSession } = useSession();
+  const updateSessionRef = useRef(updateSession);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -25,6 +26,38 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadMyInviteCode();
+  }, []);
+
+  useEffect(() => {
+    updateSessionRef.current = updateSession;
+  }, [updateSession]);
+
+  useEffect(() => {
+    const refreshSession = async (withReconcile = false) => {
+      if (withReconcile) {
+        await fetch('/api/user/history?page=1&limit=1', { cache: 'no-store' }).catch(() => {});
+      }
+      await updateSessionRef.current().catch(() => {});
+    };
+
+    void refreshSession(true);
+
+    const handleFocus = () => {
+      void refreshSession(false);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshSession(false);
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   const loadMyInviteCode = async () => {

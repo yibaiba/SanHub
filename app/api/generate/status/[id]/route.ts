@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getGeneration } from '@/lib/db';
+import { getGeneration, refundGenerationBalance, updateGeneration } from '@/lib/db';
+import { resolveExpectedMediaType, validateGeneratedMediaUrl } from '@/lib/media-url-validator';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,33 +54,80 @@ export async function GET(
       return NextResponse.json({ error: '无权访问此任务' }, { status: 403 });
     }
 
+    let latestGeneration = generation;
+
+    // 兜底纠偏：媒体任务必须有有效 URL，completed 但无效 URL 统一改成失败
+    const expectedMediaType = resolveExpectedMediaType(latestGeneration.type);
+    if (latestGeneration.status === 'completed' && expectedMediaType) {
+      const validation = validateGeneratedMediaUrl(latestGeneration.resultUrl || '', expectedMediaType);
+      if (!validation.valid) {
+        try {
+          const updated = await updateGeneration(latestGeneration.id, {
+            status: 'failed',
+            errorMessage:
+              latestGeneration.errorMessage ||
+              `Generation failed: missing valid ${expectedMediaType} URL (${validation.reason})`,
+          });
+          if (updated) {
+            latestGeneration = updated;
+          }
+        } catch (markErr) {
+          console.error('[API] Mark invalid completed generation as failed error:', markErr);
+        }
+      }
+    }
+
+    // 兜底补偿：失败/取消但尚未退款时，自动补退一次
+    if (
+      (latestGeneration.status === 'failed' || latestGeneration.status === 'cancelled') &&
+      latestGeneration.balancePrecharged &&
+      !latestGeneration.balanceRefunded &&
+      latestGeneration.cost > 0
+    ) {
+      try {
+        const refunded = await refundGenerationBalance(
+          latestGeneration.id,
+          latestGeneration.userId,
+          latestGeneration.cost
+        );
+        if (refunded) {
+          const refreshed = await getGeneration(latestGeneration.id);
+          if (refreshed) {
+            latestGeneration = refreshed;
+          }
+        }
+      } catch (refundErr) {
+        console.error('[API] Auto refund on status check failed:', refundErr);
+      }
+    }
+
     // 解析 params（可能是 JSON 字符串或对象）
     let generationParams: Record<string, unknown> | undefined;
-    if (generation.params) {
-      if (typeof generation.params === 'string') {
+    if (latestGeneration.params) {
+      if (typeof latestGeneration.params === 'string') {
         try {
-          generationParams = JSON.parse(generation.params);
+          generationParams = JSON.parse(latestGeneration.params);
         } catch {
           generationParams = undefined;
         }
       } else {
-        generationParams = generation.params as Record<string, unknown>;
+        generationParams = latestGeneration.params as Record<string, unknown>;
       }
     }
 
     return NextResponse.json({
       success: true,
       data: {
-        id: generation.id,
-        status: generation.status,
-        type: generation.type,
-        url: convertToMediaUrl(generation.resultUrl, generation.id, generation.type),
-        cost: generation.cost,
+        id: latestGeneration.id,
+        status: latestGeneration.status,
+        type: latestGeneration.type,
+        url: convertToMediaUrl(latestGeneration.resultUrl, latestGeneration.id, latestGeneration.type),
+        cost: latestGeneration.cost,
         progress: generationParams?.progress ?? 0,
-        errorMessage: generation.errorMessage,
+        errorMessage: latestGeneration.errorMessage,
         params: generationParams,
-        createdAt: generation.createdAt,
-        updatedAt: generation.updatedAt,
+        createdAt: latestGeneration.createdAt,
+        updatedAt: latestGeneration.updatedAt,
       },
     });
   } catch (error) {

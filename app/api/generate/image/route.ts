@@ -31,6 +31,16 @@ const IMAGE_TYPE_BY_CHANNEL: Record<ChannelType, GenerationType> = {
   sora: 'sora-image',
 };
 
+class ClientInputError extends Error {
+  readonly statusCode: number;
+
+  constructor(message: string, statusCode = 400) {
+    super(message);
+    this.name = 'ClientInputError';
+    this.statusCode = statusCode;
+  }
+}
+
 async function fetchImageAsBase64(
   imageUrl: string,
   origin: string
@@ -39,11 +49,11 @@ async function fetchImageAsBase64(
   if (imageUrl.startsWith('data:')) {
     const match = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!match) {
-      throw new Error('Invalid data URL format');
+      throw new ClientInputError('Invalid data URL format');
     }
     const [, mimeType, data] = match;
     if (!mimeType.startsWith('image/')) {
-      throw new Error('Unsupported reference image content type');
+      throw new ClientInputError('Unsupported reference image content type');
     }
     console.log(`[fetchImageAsBase64] Parsed base64 data URL, mimeType: ${mimeType}`);
     return { mimeType, data: imageUrl };
@@ -59,7 +69,7 @@ async function fetchImageAsBase64(
     },
   });
   if (!contentType.startsWith('image/')) {
-    throw new Error('Unsupported reference image content type');
+    throw new ClientInputError('Unsupported reference image content type');
   }
   const data = buffer.toString('base64');
   return { mimeType: contentType, data: `data:${contentType};base64,${data}` };
@@ -170,7 +180,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '账号已被禁用' }, { status: 403 });
     }
 
-    // 检查余额（管理员豁免）
     const isAdmin = user.role === 'admin';
     if (!isAdmin && user.balance < model.costPerGeneration) {
       return NextResponse.json(
@@ -179,10 +188,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 扣除积分（管理员豁免）
+    const promptText = typeof prompt === 'string' ? prompt : '';
+    const hasInlineImages = Array.isArray(images) && images.length > 0;
+    const hasReferenceImageUrl = typeof referenceImageUrl === 'string' && referenceImageUrl.trim().length > 0;
+    const hasReferenceImages = Array.isArray(referenceImages) && referenceImages.length > 0;
+    const hasAnyImageInput = hasInlineImages || hasReferenceImageUrl || hasReferenceImages;
+
+    // 轻量校验（扣费前）
+    if (model.requiresReferenceImage && !hasAnyImageInput) {
+      return NextResponse.json({ error: '该模型需要上传参考图' }, { status: 400 });
+    }
+
+    if (!model.allowEmptyPrompt && !promptText.trim() && !hasAnyImageInput) {
+      return NextResponse.json({ error: '请输入提示词或上传参考图' }, { status: 400 });
+    }
+
+    // 原子扣费：放在重负载参考图拉取之前，避免并发滥用
+    let prechargeApplied = false;
     if (!isAdmin) {
       try {
         await updateUserBalance(user.id, -model.costPerGeneration, 'strict');
+        prechargeApplied = true;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Insufficient balance';
         if (message.includes('Insufficient balance')) {
@@ -195,59 +221,60 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 处理参考图
-    const origin = new URL(request.url).origin;
-    const imageList: Array<{ mimeType: string; data: string }> = [];
+    let generationSaved = false;
+    try {
+      // 处理参考图（重负载）
+      const origin = new URL(request.url).origin;
+      const imageList: Array<{ mimeType: string; data: string }> = [];
 
-    if (images && Array.isArray(images)) {
-      imageList.push(...images);
-    }
+      if (images && Array.isArray(images)) {
+        imageList.push(...images);
+      }
 
-    if (referenceImageUrl) {
-      const ref = await fetchImageAsBase64(referenceImageUrl, origin);
-      imageList.push(ref);
-    }
+      if (hasReferenceImageUrl) {
+        const ref = await fetchImageAsBase64(referenceImageUrl, origin);
+        imageList.push(ref);
+      }
 
-    if (referenceImages && Array.isArray(referenceImages)) {
-      for (const img of referenceImages) {
-        if (img.startsWith('data:')) {
-          const match = img.match(/^data:([^;]+);base64,(.+)$/);
-          if (match) {
-            imageList.push({ mimeType: match[1], data: img });
+      if (referenceImages && Array.isArray(referenceImages)) {
+        for (const img of referenceImages) {
+          if (typeof img !== 'string') {
+            throw new ClientInputError('Invalid reference image input');
           }
-        } else {
-          const ref = await fetchImageAsBase64(img, origin);
-          imageList.push(ref);
+          if (img.startsWith('data:')) {
+            const match = img.match(/^data:([^;]+);base64,(.+)$/);
+            if (match) {
+              imageList.push({ mimeType: match[1], data: img });
+            }
+          } else {
+            const ref = await fetchImageAsBase64(img, origin);
+            imageList.push(ref);
+          }
         }
       }
-    }
 
-    // 验证必须参考图
-    if (model.requiresReferenceImage && imageList.length === 0) {
-      return NextResponse.json({ error: '该模型需要上传参考图' }, { status: 400 });
-    }
+      // 再次校验（处理后兜底）
+      if (model.requiresReferenceImage && imageList.length === 0) {
+        throw new ClientInputError('该模型需要上传参考图');
+      }
+      if (!model.allowEmptyPrompt && !promptText.trim() && imageList.length === 0) {
+        throw new ClientInputError('请输入提示词或上传参考图');
+      }
 
-    // 验证提示词
-    if (!model.allowEmptyPrompt && !prompt && imageList.length === 0) {
-      return NextResponse.json({ error: '请输入提示词或上传参考图' }, { status: 400 });
-    }
+      // 构建请求
+      const generateRequest: ImageGenerateRequest = {
+        modelId,
+        prompt: promptText,
+        aspectRatio,
+        imageSize,
+        images: imageList.length > 0 ? imageList : undefined,
+      };
 
-    // 构建请求
-    const generateRequest: ImageGenerateRequest = {
-      modelId,
-      prompt: prompt || '',
-      aspectRatio,
-      imageSize,
-      images: imageList.length > 0 ? imageList : undefined,
-    };
-
-    // 保存生成记录
-    let generation: Generation;
-    try {
-      generation = await saveGeneration({
+      // 保存生成记录
+      const generation = await saveGeneration({
         userId: user.id,
         type: IMAGE_TYPE_BY_CHANNEL[channel.type] || 'gemini-image',
-        prompt: prompt || '',
+        prompt: promptText,
         params: {
           model: model.apiModel,
           aspectRatio,
@@ -260,35 +287,45 @@ export async function POST(request: NextRequest) {
         balancePrecharged: true,
         balanceRefunded: false,
       });
-    } catch (saveErr) {
-      await updateUserBalance(user.id, model.costPerGeneration, 'strict').catch(refundErr => {
-        console.error('[API] Precharge rollback failed:', refundErr);
-      });
-      throw saveErr;
-    }
+      generationSaved = true;
 
-    console.log('[API] 图像生成任务已创建:', {
-      id: generation.id,
-      modelId,
-      model: model.apiModel,
-      resolvedModel: resolvedTarget.model,
-      resolvedSize: resolvedTarget.size,
-    });
-
-    // 后台处理
-    processGenerationTask(generation.id, user.id, generateRequest, model.costPerGeneration).catch((err) => {
-      console.error('[API] 后台任务启动失败:', err);
-    });
-
-    return NextResponse.json({
-      success: true,
-      data: {
+      console.log('[API] 图像生成任务已创建:', {
         id: generation.id,
-        status: 'pending',
-        message: '任务已创建，正在后台处理中',
-      },
-    });
+        modelId,
+        model: model.apiModel,
+        resolvedModel: resolvedTarget.model,
+        resolvedSize: resolvedTarget.size,
+      });
+
+      // 后台处理
+      processGenerationTask(generation.id, user.id, generateRequest, model.costPerGeneration).catch((err) => {
+        console.error('[API] 后台任务启动失败:', err);
+      });
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          id: generation.id,
+          status: 'pending',
+          message: '任务已创建，正在后台处理中',
+        },
+      });
+    } catch (stageErr) {
+      // 扣费后、落库前发生异常时回滚扣费
+      if (prechargeApplied && !generationSaved) {
+        await updateUserBalance(user.id, model.costPerGeneration, 'strict').catch((refundErr) => {
+          console.error('[API] Precharge rollback failed:', refundErr);
+        });
+      }
+      throw stageErr;
+    }
   } catch (error) {
+    if (error instanceof ClientInputError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.statusCode }
+      );
+    }
     console.error('[API] Image generation error:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : '生成失败' },

@@ -72,6 +72,15 @@ const getGenerationBadge = (gen: Generation) => {
   return getTypeBadge(gen.type);
 };
 
+const getDisplayCost = (gen: Pick<Generation, 'cost' | 'status' | 'balancePrecharged' | 'balanceRefunded'>) => {
+  const cost = Number(gen.cost) || 0;
+  if (cost <= 0) return 0;
+  if (gen.balancePrecharged === false) return 0;
+  if (gen.balanceRefunded) return 0;
+  if (gen.status === 'failed' || gen.status === 'cancelled') return 0;
+  return cost;
+};
+
 const RENDER_INITIAL = 24;
 const RENDER_BATCH = 24;
 
@@ -361,6 +370,8 @@ export default function HistoryPage() {
             await update();
             // 强制刷新列表，忽略 loading 状态
             loadHistoryRef.current(1, false, true);
+          } else {
+            await update().catch(() => {});
           }
         } else {
           // 更新任务状态和进度
@@ -1022,7 +1033,7 @@ export default function HistoryPage() {
                   <div className="flex flex-wrap items-center gap-2 md:gap-3 mt-2">
                     <span className="text-foreground/40 text-xs">{formatDate(selected.createdAt)}</span>
                     <span className="text-foreground/30 hidden md:inline">·</span>
-                    <span className="text-foreground/40 text-xs">{selected.cost} 积分</span>
+                    <span className="text-foreground/40 text-xs">{getDisplayCost(selected)} 积分</span>
                     <span className="text-foreground/30 hidden md:inline">·</span>
                     <span className="px-2 py-0.5 bg-card/70 text-foreground/60 text-xs rounded">
                       {getGenerationBadge(selected).label}

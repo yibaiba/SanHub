@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { useSession } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import {
   Video,
@@ -82,6 +83,7 @@ function OptionGroup({ label, children, className, contentClassName }: OptionGro
 }
 
 export default function VideoGenerationPage() {
+  const { update } = useSession();
   // 图片库选择状态
   const [showImagePicker, setShowImagePicker] = useState(false);
   const [imageLibrary, setImageLibrary] = useState<Generation[]>([]);
@@ -502,6 +504,7 @@ export default function VideoGenerationPage() {
           const isCompletedStatus = status === 'completed' || status === 'succeeded';
 
           if (isCompletedStatus && resultUrl) {
+            await update().catch(() => {});
             // Get reference images from task before removing it
             let referenceImages: string[] | undefined;
             setTasks((prev) => {
@@ -535,6 +538,7 @@ export default function VideoGenerationPage() {
 
             abortControllersRef.current.delete(taskId);
           } else if (status === 'failed' || status === 'cancelled') {
+            await update().catch(() => {});
             setTasks((prev) =>
               prev.map((t) =>
                 t.id === taskId
@@ -613,7 +617,7 @@ export default function VideoGenerationPage() {
 
       await poll();
     },
-    []
+    [update]
   );
 
   // 加载 pending 任务和历史记录

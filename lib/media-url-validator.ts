@@ -1,4 +1,4 @@
-type ExpectedMediaType = 'image' | 'video';
+export type ExpectedMediaType = 'image' | 'video';
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'avif']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v', 'mpg', 'mpeg']);
@@ -14,6 +14,17 @@ type TextValidationResult = {
   normalizedText: string;
   reason?: string;
 };
+
+export function resolveExpectedMediaType(generationType: string): ExpectedMediaType | null {
+  const normalizedType = generationType.toLowerCase();
+  if (!normalizedType) return null;
+
+  if (normalizedType === 'video-capture') return 'image';
+  if (normalizedType === 'chat' || normalizedType === 'character-card') return null;
+  if (normalizedType.includes('image')) return 'image';
+  if (normalizedType.includes('video')) return 'video';
+  return null;
+}
 
 function parseDataUrlMimeType(url: string): string | null {
   const match = url.match(/^data:([^;,]+);base64,[A-Za-z0-9+/=]+$/i);
