@@ -541,7 +541,7 @@ export default function VideoGenerationPage() {
                   ? {
                       ...t,
                       status: 'failed' as const,
-                      errorMessage: data.data.errorMessage || '生成失败',
+                      errorMessage: formatVideoError(data.data.errorMessage || '生成失败'),
                     }
                   : t
               )
@@ -602,7 +602,7 @@ export default function VideoGenerationPage() {
                 ? {
                     ...t,
                     status: 'failed' as const,
-                    errorMessage: errMsg,
+                    errorMessage: formatVideoError(errMsg),
                   }
                 : t
             )

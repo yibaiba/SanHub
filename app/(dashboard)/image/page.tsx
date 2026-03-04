@@ -356,7 +356,7 @@ export default function ImageGenerationPage() {
                   ? {
                       ...t,
                       status: 'failed' as const,
-                      errorMessage: data.data.errorMessage || '生成失败',
+                      errorMessage: formatImageError(data.data.errorMessage || '生成失败'),
                   }
                   : t
               )

@@ -18,6 +18,7 @@ import type { Generation, GenerationType, SoraGenerateRequest } from '@/types';
 import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
 import { fetchExternalBuffer } from '@/lib/safe-fetch';
 import { readMediaFile, isLocalFile } from '@/lib/media-storage';
+import { validateGeneratedMediaUrl } from '@/lib/media-url-validator';
 
 // 配置路由段选项
 export const maxDuration = 60;
@@ -162,13 +163,17 @@ async function processGenerationTask(
 
     // 调用 Sora API 生成内容
     const result = await generateWithRateLimitRetry(body, onProgress, generationId);
+    const validation = validateGeneratedMediaUrl(result.url, 'video');
+    if (!validation.valid) {
+      throw new Error(`生成失败：未返回有效视频 URL（${validation.reason}）`);
+    }
 
     console.log(`[Task ${generationId}] 生成成功:`, result.url);
 
     // 更新生成记录为完成状态
     await updateGeneration(generationId, {
       status: 'completed',
-      resultUrl: result.url,
+      resultUrl: validation.normalizedUrl,
       params: {
         model: body.model,
         videoId: result.videoId,
@@ -262,10 +267,14 @@ async function processVideoTask(
     };
 
     const result = await generateVideo(request, onProgress);
+    const validation = validateGeneratedMediaUrl(result.url, 'video');
+    if (!validation.valid) {
+      throw new Error(`Video generation failed: invalid video URL (${validation.reason})`);
+    }
 
     await updateGeneration(generationId, {
       status: 'completed',
-      resultUrl: result.url,
+      resultUrl: validation.normalizedUrl,
       params: {
         modelId: meta.modelId,
         model: meta.apiModel,

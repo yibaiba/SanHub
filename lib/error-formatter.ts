@@ -59,11 +59,11 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string | ((match: RegExp
   // Flow/Sora API 特定错误
   {
     pattern: /Flow API error \((\d+)\): (.+)/i,
-    message: (match) => `视频生成失败 (${match[1]}): ${match[2].substring(0, 50)}${match[2].length > 50 ? '...' : ''}`
+    message: (match) => `视频生成失败（错误码 ${match[1]}），请稍后重试`
   },
   {
     pattern: /Flow API returned (.+)/i,
-    message: (match) => `视频服务返回异常: ${match[1].substring(0, 50)}${match[1].length > 50 ? '...' : ''}`
+    message: '视频服务返回异常，请稍后重试'
   },
 
   // 通用 API 错误
@@ -97,9 +97,11 @@ export function formatGenerationError(error: Error | string, type: 'video' | 'im
   // 替换常见技术术语
   let formatted = message;
 
-  // 替换 Flow 关键词
-  if (/flow/i.test(formatted)) {
-    formatted = formatted.replace(/flow/gi, '视频生成');
+  // 替换渠道/供应商关键词，避免直接暴露到用户提示中
+  if (/(flow|veo|sora)/i.test(formatted)) {
+    formatted = formatted.replace(/flow/gi, '视频服务');
+    formatted = formatted.replace(/veo/gi, '视频服务');
+    formatted = formatted.replace(/sora/gi, '视频服务');
   }
 
   // 截断过长的错误消息

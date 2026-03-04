@@ -1,5 +1,6 @@
 import { getVideoModelWithChannel } from './db';
 import { fetchWithRetry } from './http-retry';
+import { validateGeneratedMediaUrl } from './media-url-validator';
 import { generateWithSora } from './sora';
 import { uploadImageToVeo } from './image-upload';
 import type { GenerateResult } from '@/types';
@@ -208,7 +209,12 @@ async function generateWithFlowChat(
     throw new Error(`Flow API returned unexpected content: ${responseText.substring(0, 200)}`);
   }
 
-  return { type: 'flow-video', url: media.url, cost: 0 };
+  const validation = validateGeneratedMediaUrl(media.url, 'video');
+  if (!validation.valid) {
+    throw new Error(`Flow API returned invalid video URL: ${validation.reason}`);
+  }
+
+  return { type: 'flow-video', url: validation.normalizedUrl, cost: 0 };
 }
 
 export async function generateFlowVideoByModel(params: {

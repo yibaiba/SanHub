@@ -14,6 +14,7 @@ import {
 import { saveMediaAsync } from '@/lib/media-storage';
 import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
 import { fetchExternalBuffer } from '@/lib/safe-fetch';
+import { validateGeneratedMediaUrl } from '@/lib/media-url-validator';
 import type { ChannelType, Generation, GenerationType } from '@/types';
 
 export const maxDuration = 60;
@@ -77,15 +78,23 @@ async function processGenerationTask(
     await updateGeneration(generationId, { status: 'processing' });
 
     const result = await generateImage(request);
+    const sourceUrlValidation = validateGeneratedMediaUrl(result.url, 'image');
+    if (!sourceUrlValidation.valid) {
+      throw new Error(`Image generation failed: invalid image URL (${sourceUrlValidation.reason})`);
+    }
 
     // 保存到图床或本地
-    const savedUrl = await saveMediaAsync(generationId, result.url);
+    const savedUrl = await saveMediaAsync(generationId, sourceUrlValidation.normalizedUrl);
+    const savedUrlValidation = validateGeneratedMediaUrl(savedUrl, 'image');
+    if (!savedUrlValidation.valid) {
+      throw new Error(`Image generation failed: invalid saved image URL (${savedUrlValidation.reason})`);
+    }
 
     console.log(`[Task ${generationId}] 生成成功`);
 
     await updateGeneration(generationId, {
       status: 'completed',
-      resultUrl: savedUrl,
+      resultUrl: savedUrlValidation.normalizedUrl,
     });
 
     console.log(`[Task ${generationId}] 任务完成`);

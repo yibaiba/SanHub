@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getChatModel, getUserById, updateUserBalance } from '@/lib/db';
+import { validateGeneratedTextContent } from '@/lib/media-url-validator';
 import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
 import type { StoryboardData } from '@/types';
 
@@ -283,7 +284,11 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await response.json();
-    const assistantContent = data.choices?.[0]?.message?.content || '';
+    const contentValidation = validateGeneratedTextContent(data.choices?.[0]?.message?.content);
+    if (!contentValidation.valid) {
+      throw new Error(`聊天失败：未返回有效文本内容（${contentValidation.reason}）`);
+    }
+    const assistantContent = contentValidation.normalizedText;
 
     // Deduct balance
     await updateUserBalance(session.user.id, -model.costPerMessage, 'strict');

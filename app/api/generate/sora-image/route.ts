@@ -6,6 +6,7 @@ import { generateImage } from '@/lib/sora-api';
 import { saveGeneration, updateUserBalance, getUserById, updateGeneration, getSystemConfig, refundGenerationBalance } from '@/lib/db';
 import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
 import { fetchExternalBuffer } from '@/lib/safe-fetch';
+import { validateGeneratedMediaUrl } from '@/lib/media-url-validator';
 import type { Generation } from '@/types';
 
 export const maxDuration = 120;
@@ -81,6 +82,15 @@ async function processGenerationTask(
     }
 
     const first = result.data[0];
+    const firstUrl = first.url;
+    if (typeof firstUrl !== 'string' || !firstUrl.trim()) {
+      throw new Error('图片生成失败：未返回有效的图片 URL');
+    }
+
+    const validation = validateGeneratedMediaUrl(firstUrl, 'image');
+    if (!validation.valid) {
+      throw new Error(`图片生成失败：返回的图片 URL 无效（${validation.reason}）`);
+    }
     const config = await getSystemConfig();
     const cost = config.pricing.soraImage || 1;
 
@@ -88,7 +98,7 @@ async function processGenerationTask(
 
     await updateGeneration(generationId, {
       status: 'completed',
-      resultUrl: first.url,
+      resultUrl: validation.normalizedUrl,
       params: {
         model: body.model,
         size: body.size,
