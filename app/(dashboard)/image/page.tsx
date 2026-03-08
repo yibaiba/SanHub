@@ -23,6 +23,9 @@ import { toast } from '@/components/ui/toaster';
 import type { Task } from '@/components/generator/result-gallery';
 import { getPollingInterval, shouldContinuePolling, isTransientError, getFriendlyErrorMessage } from '@/lib/polling-utils';
 import { formatImageError } from '@/lib/error-formatter';
+import { buildGenerationMediaProxyPath } from '@/lib/generation-urls';
+import { buildRawMediaDownloadUrl } from '@/lib/media-download';
+import { resolveExpectedMediaType } from '../../../lib/media-url-validator';
 
 const ResultGallery = dynamic(
   () => import('@/components/generator/result-gallery').then((mod) => mod.ResultGallery),
@@ -183,7 +186,7 @@ export default function ImageGenerationPage() {
         const data = await res.json();
         const images = (data.data || []).filter(
           (g: Generation) =>
-            g.type.includes('image') || g.type === 'video-capture'
+            resolveExpectedMediaType(g.type) === 'image'
         );
         setLibraryImages(images);
       }
@@ -215,7 +218,7 @@ export default function ImageGenerationPage() {
       // 获取图片 Blob
       // 注意：加 ?raw=true 告诉后端不要重定向，而是代理回传二进制数据，
       // 这样前端才能拿到 Blob 并创建 File 对象
-      const response = await fetch(`/api/media/${generation.id}?raw=true`);
+      const response = await fetch(buildRawMediaDownloadUrl(buildGenerationMediaProxyPath(generation.id)));
       if (!response.ok) throw new Error('Failed to fetch image data');
 
       const blob = await response.blob();
@@ -372,7 +375,7 @@ export default function ImageGenerationPage() {
               type: data.data.type,
               prompt: taskPrompt,
               params: {},
-              resultUrl: rawUrl || `/api/media/${data.data.id || taskId}`,
+              resultUrl: rawUrl || buildGenerationMediaProxyPath(data.data.id || taskId),
               cost: data.data.cost,
               status: 'completed',
               createdAt: data.data.createdAt,
@@ -480,7 +483,7 @@ export default function ImageGenerationPage() {
           const data = await res.json();
           const imageGenerations = (data.data || []).filter(
             (g: Generation) =>
-              g.type?.includes('image')
+              resolveExpectedMediaType(g.type || '') === 'image'
           );
           setGenerations(imageGenerations);
           setHasMoreHistory(imageGenerations.length === 50);
@@ -527,7 +530,7 @@ export default function ImageGenerationPage() {
         const data = await res.json();
         const imageGenerations = (data.data || []).filter(
           (g: Generation) =>
-            g.type?.includes('image')
+            resolveExpectedMediaType(g.type || '') === 'image'
         );
         setGenerations(prev => [...prev, ...imageGenerations]);
         setHasMoreHistory(imageGenerations.length === 50);

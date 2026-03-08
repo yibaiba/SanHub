@@ -81,6 +81,8 @@ export interface SafeUser {
 }
 
 // 生成记录
+export type GenerationVisibility = 'private' | 'public';
+
 export interface Generation {
   id: string;
   userId: string;
@@ -93,6 +95,9 @@ export interface Generation {
   balancePrecharged?: boolean;
   balanceRefunded?: boolean;
   errorMessage?: string;
+  visibility?: GenerationVisibility;
+  publicShareId?: string;
+  publicViewCount?: number;
   createdAt: number;
   updatedAt: number;
 }

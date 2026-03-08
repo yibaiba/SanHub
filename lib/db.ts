@@ -1,9 +1,10 @@
 /* eslint-disable no-console */
-import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, UserRole } from '@/types';
+import type { User, Generation, GenerationVisibility, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, UserRole } from '@/types';
 import { generateId } from './utils';
 import bcrypt from 'bcryptjs';
 import { createDatabaseAdapter, type DatabaseAdapter } from './db-adapter';
 import { cache, CacheKeys, CacheTTL, withCache } from './cache';
+import { resolveExpectedMediaType, validatePublishableMediaUrl } from './media-url-validator';
 
 // ========================================
 // 数据库连接（支持 SQLite �?MySQL�?
@@ -189,6 +190,70 @@ CREATE TABLE IF NOT EXISTS shared_workflows (
 
 let initialized = false;
 
+export interface PublishedGenerationRecord extends Generation {
+  authorName: string;
+  authorId: string;
+}
+
+function parseGenerationParams(raw: unknown): Generation['params'] {
+  if (!raw) return {};
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  if (typeof raw === 'object') {
+    return raw as Generation['params'];
+  }
+  return {};
+}
+
+function mapGenerationRow(row: any): Generation {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    prompt: row.prompt,
+    params: parseGenerationParams(row.params),
+    resultUrl: row.result_url,
+    cost: Number(row.cost || 0),
+    status: (row.status || 'completed') as Generation['status'],
+    balancePrecharged: Boolean(row.balance_precharged),
+    balanceRefunded: Boolean(row.balance_refunded),
+    errorMessage: row.error_message || undefined,
+    visibility: (row.visibility === 'public' ? 'public' : 'private') as GenerationVisibility,
+    publicShareId: row.public_share_id || undefined,
+    publicViewCount: Number(row.public_view_count || 0),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at || row.created_at),
+  };
+}
+
+const PUBLIC_SHAREABLE_GENERATION_TYPES_SQL = [
+  'sora-video',
+  'flow-video',
+  'sora-image',
+  'flow-image',
+  'gemini-image',
+  'zimage-image',
+  'gitee-image',
+  'video-capture',
+]
+  .map((type) => `'${type}'`)
+  .join(', ');
+
+function mapPublishedGenerationRow(row: any): PublishedGenerationRecord {
+  const generation = mapGenerationRow(row);
+  return {
+    ...generation,
+    authorName: row.author_name || 'Unknown',
+    authorId: row.author_id || generation.userId,
+  };
+}
+
+
 export async function initializeDatabase(): Promise<void> {
   const db = getAdapter();
 
@@ -273,6 +338,28 @@ export async function initializeDatabase(): Promise<void> {
     // 字段已存在，忽略错误
   }
 
+  try {
+    if (dbType === 'mysql') {
+      await db.execute("ALTER TABLE generations ADD COLUMN visibility VARCHAR(16) DEFAULT 'private'");
+    } else {
+      await db.execute("ALTER TABLE generations ADD COLUMN visibility TEXT DEFAULT 'private'");
+    }
+  } catch {
+    // 字段已存在，忽略错误
+  }
+
+  try {
+    await db.execute('ALTER TABLE generations ADD COLUMN public_share_id VARCHAR(64)');
+  } catch {
+    // 字段已存在，忽略错误
+  }
+
+  try {
+    await db.execute('ALTER TABLE generations ADD COLUMN public_view_count INT DEFAULT 0');
+  } catch {
+    // 字段已存在，忽略错误
+  }
+
   // 确保 generations.params 列存在（用于存储 permalink / revised_prompt 等扩展信息）
   try {
     if (dbType === 'mysql') {
@@ -300,8 +387,28 @@ export async function initializeDatabase(): Promise<void> {
     await db.execute("UPDATE generations SET status = 'completed' WHERE status IS NULL OR status = ''");
     await db.execute('UPDATE generations SET updated_at = created_at WHERE updated_at = 0 OR updated_at IS NULL');
     await db.execute("UPDATE generations SET params = '{}' WHERE params IS NULL OR params = ''");
+    await db.execute("UPDATE generations SET visibility = 'private' WHERE visibility IS NULL OR visibility = ''");
+    await db.execute('UPDATE generations SET public_view_count = 0 WHERE public_view_count IS NULL');
   } catch {
     // 忽略错误
+  }
+
+  try {
+    await db.execute('CREATE INDEX idx_generations_visibility_created ON generations (visibility, created_at)');
+  } catch {
+    // 索引已存在，忽略错误
+  }
+
+  try {
+    await db.execute('CREATE INDEX idx_generations_user_visibility_created ON generations (user_id, visibility, created_at)');
+  } catch {
+    // 索引已存在，忽略错误
+  }
+
+  try {
+    await db.execute('CREATE UNIQUE INDEX idx_generations_public_share_id ON generations (public_share_id)');
+  } catch {
+    // 索引已存在，忽略错误
   }
 
   // 添加 Z-Image 配置字段（如果不存在）
@@ -854,11 +961,14 @@ export async function saveGeneration(
     updatedAt: now,
     balancePrecharged: generation.balancePrecharged ?? false,
     balanceRefunded: generation.balanceRefunded ?? false,
+    visibility: generation.visibility ?? 'private',
+    publicShareId: generation.publicShareId,
+    publicViewCount: generation.publicViewCount ?? 0,
   };
 
   await db.execute(
-    `INSERT INTO generations (id, user_id, type, prompt, params, result_url, cost, balance_precharged, balance_refunded, status, error_message, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO generations (id, user_id, type, prompt, params, result_url, cost, balance_precharged, balance_refunded, status, error_message, visibility, public_share_id, public_view_count, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       gen.id,
       gen.userId,
@@ -871,6 +981,9 @@ export async function saveGeneration(
       gen.balanceRefunded ? 1 : 0,
       gen.status,
       gen.errorMessage || null,
+      gen.visibility || 'private',
+      gen.publicShareId || null,
+      gen.publicViewCount ?? 0,
       gen.createdAt,
       gen.updatedAt,
     ]
@@ -974,21 +1087,7 @@ export async function getUserGenerations(
     [userId]
   );
 
-  return (rows as any[]).map((row) => ({
-    id: row.id,
-    userId: row.user_id,
-    type: row.type,
-    prompt: row.prompt,
-    params: typeof row.params === 'string' ? JSON.parse(row.params) : row.params,
-    resultUrl: row.result_url,
-    cost: row.cost,
-    status: row.status || 'completed',
-    balancePrecharged: Boolean(row.balance_precharged),
-    balanceRefunded: Boolean(row.balance_refunded),
-    errorMessage: row.error_message || undefined,
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at || row.created_at),
-  }));
+  return (rows as any[]).map(mapGenerationRow);
 }
 
 // 获取用户正在进行的任务（pending 或 processing）
@@ -1002,21 +1101,7 @@ export async function getPendingGenerations(userId: string, limit = 50): Promise
     [userId]
   );
 
-  return (rows as any[]).map((row) => ({
-    id: row.id,
-    userId: row.user_id,
-    type: row.type,
-    prompt: row.prompt,
-    params: typeof row.params === 'string' ? JSON.parse(row.params) : row.params,
-    resultUrl: row.result_url,
-    cost: row.cost,
-    status: row.status,
-    balancePrecharged: Boolean(row.balance_precharged),
-    balanceRefunded: Boolean(row.balance_refunded),
-    errorMessage: row.error_message || undefined,
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at || row.created_at),
-  }));
+  return (rows as any[]).map(mapGenerationRow);
 }
 
 export async function getPendingGenerationsCount(): Promise<number> {
@@ -1025,6 +1110,18 @@ export async function getPendingGenerationsCount(): Promise<number> {
 
   const [rows] = await db.execute(
     `SELECT COUNT(1) as count FROM generations WHERE status IN ('pending', 'processing')`
+  );
+
+  return Number((rows as any[])[0]?.count || 0);
+}
+
+export async function getPendingGenerationsCountByUser(userId: string): Promise<number> {
+  await initializeDatabase();
+  const db = getAdapter();
+
+  const [rows] = await db.execute(
+    `SELECT COUNT(1) as count FROM generations WHERE user_id = ? AND status IN ('pending', 'processing')`,
+    [userId]
   );
 
   return Number((rows as any[])[0]?.count || 0);
@@ -1059,21 +1156,7 @@ export async function getRecentSoraVideoGenerationsByUser(
     [userId]
   );
 
-  return (rows as any[]).map((row) => ({
-    id: row.id,
-    userId: row.user_id,
-    type: row.type,
-    prompt: row.prompt,
-    params: typeof row.params === 'string' ? JSON.parse(row.params) : row.params,
-    resultUrl: row.result_url,
-    cost: row.cost,
-    status: row.status || 'completed',
-    balancePrecharged: Boolean(row.balance_precharged),
-    balanceRefunded: Boolean(row.balance_refunded),
-    errorMessage: row.error_message || undefined,
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at || row.created_at),
-  }));
+  return (rows as any[]).map(mapGenerationRow);
 }
 
 export async function getRecentSoraVideoGenerations(limit = 20): Promise<Generation[]> {
@@ -1087,21 +1170,7 @@ export async function getRecentSoraVideoGenerations(limit = 20): Promise<Generat
      ORDER BY created_at DESC LIMIT ${safeLimit}`
   );
 
-  return (rows as any[]).map((row) => ({
-    id: row.id,
-    userId: row.user_id,
-    type: row.type,
-    prompt: row.prompt,
-    params: typeof row.params === 'string' ? JSON.parse(row.params) : row.params,
-    resultUrl: row.result_url,
-    cost: row.cost,
-    status: row.status || 'completed',
-    balancePrecharged: Boolean(row.balance_precharged),
-    balanceRefunded: Boolean(row.balance_refunded),
-    errorMessage: row.error_message || undefined,
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at || row.created_at),
-  }));
+  return (rows as any[]).map(mapGenerationRow);
 }
 
 export async function getGeneration(id: string): Promise<Generation | null> {
@@ -1113,21 +1182,197 @@ export async function getGeneration(id: string): Promise<Generation | null> {
   if (gens.length === 0) return null;
 
   const row = gens[0];
-  return {
-    id: row.id,
-    userId: row.user_id,
-    type: row.type,
-    prompt: row.prompt,
-    params: typeof row.params === 'string' ? JSON.parse(row.params) : row.params,
-    resultUrl: row.result_url,
-    cost: row.cost,
-    status: row.status || 'completed',
-    balancePrecharged: Boolean(row.balance_precharged),
-    balanceRefunded: Boolean(row.balance_refunded),
-    errorMessage: row.error_message || undefined,
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at || row.created_at),
-  };
+  return mapGenerationRow(row);
+}
+
+export async function getGenerationOwner(id: string): Promise<User | null> {
+  const generation = await getGeneration(id);
+  if (!generation) return null;
+  return getUserById(generation.userId);
+}
+
+export async function publishGeneration(id: string, userId: string): Promise<Generation> {
+  await initializeDatabase();
+  const db = getAdapter();
+
+  const generation = await getGeneration(id);
+  if (!generation || generation.userId !== userId) {
+    throw new Error('Generation not found');
+  }
+  if (generation.status !== 'completed' || !generation.resultUrl) {
+    throw new Error('Only completed generations can be published');
+  }
+  const expectedMediaType = resolveExpectedMediaType(generation.type);
+  if (!expectedMediaType) {
+    throw new Error('Only image or video generations can be published');
+  }
+  const validation = validatePublishableMediaUrl(generation.resultUrl, expectedMediaType);
+  if (!validation.valid) {
+    throw new Error(`Generation is missing a valid ${expectedMediaType} URL: ${validation.reason}`);
+  }
+
+  const shareId = generation.publicShareId || generateId().replace(/-/g, '');
+  await db.execute(
+    'UPDATE generations SET visibility = ?, public_share_id = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+    ['public', shareId, Date.now(), id, userId]
+  );
+
+  const updated = await getGeneration(id);
+  if (!updated) throw new Error('Generation not found');
+  return updated;
+}
+
+export async function unpublishGeneration(id: string, userId: string): Promise<Generation> {
+  await initializeDatabase();
+  const db = getAdapter();
+
+  const generation = await getGeneration(id);
+  if (!generation || generation.userId !== userId) {
+    throw new Error('Generation not found');
+  }
+
+  await db.execute(
+    'UPDATE generations SET visibility = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+    ['private', Date.now(), id, userId]
+  );
+
+  const updated = await getGeneration(id);
+  if (!updated) throw new Error('Generation not found');
+  return updated;
+}
+
+export async function getPublishedGenerationByShareId(shareId: string): Promise<PublishedGenerationRecord | null> {
+  await initializeDatabase();
+  const db = getAdapter();
+
+  const [rows] = await db.execute(
+    `SELECT g.*, u.id AS author_id, u.name AS author_name
+     FROM generations g
+     JOIN users u ON u.id = g.user_id
+     WHERE g.public_share_id = ?
+       AND g.visibility = 'public'
+       AND g.status = 'completed'
+       AND g.result_url IS NOT NULL
+       AND g.result_url != ''
+       AND g.type IN (${PUBLIC_SHAREABLE_GENERATION_TYPES_SQL})
+     LIMIT 1`,
+    [shareId]
+  );
+
+  const row = (rows as any[])[0];
+  if (!row) return null;
+  return mapPublishedGenerationRow(row);
+}
+
+export async function incrementPublishedGenerationViewCount(shareId: string): Promise<number> {
+  await initializeDatabase();
+  const db = getAdapter();
+  await db.execute(
+    `UPDATE generations
+     SET public_view_count = COALESCE(public_view_count, 0) + 1
+     WHERE public_share_id = ? AND visibility = 'public'`,
+    [shareId]
+  );
+
+  const [rows] = await db.execute(
+    `SELECT public_view_count
+     FROM generations
+     WHERE public_share_id = ? AND visibility = 'public'
+     LIMIT 1`,
+    [shareId]
+  );
+
+  return Number((rows as any[])[0]?.public_view_count || 0);
+}
+
+export async function getPublishedGenerations(limit = 24, offset = 0): Promise<PublishedGenerationRecord[]> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const safeLimit = Math.max(Number(limit) || 24, 1);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+
+  const [rows] = await db.execute(
+    `SELECT g.*, u.id AS author_id, u.name AS author_name
+     FROM generations g
+     JOIN users u ON u.id = g.user_id
+     WHERE g.visibility = 'public'
+       AND g.status = 'completed'
+       AND g.result_url IS NOT NULL
+       AND g.result_url != ''
+       AND g.public_share_id IS NOT NULL
+       AND g.public_share_id != ''
+       AND g.type IN (${PUBLIC_SHAREABLE_GENERATION_TYPES_SQL})
+     ORDER BY g.created_at DESC
+     LIMIT ${safeLimit} OFFSET ${safeOffset}`
+  );
+
+  return (rows as any[]).map(mapPublishedGenerationRow);
+}
+
+export async function getPublishedGenerationsCount(): Promise<number> {
+  await initializeDatabase();
+  const db = getAdapter();
+
+  const [rows] = await db.execute(
+    `SELECT COUNT(1) AS count
+     FROM generations
+     WHERE visibility = 'public'
+       AND status = 'completed'
+       AND result_url IS NOT NULL
+       AND result_url != ''
+       AND public_share_id IS NOT NULL
+       AND public_share_id != ''
+       AND type IN (${PUBLIC_SHAREABLE_GENERATION_TYPES_SQL})`
+  );
+
+  return Number((rows as any[])[0]?.count || 0);
+}
+
+export async function getPublishedGenerationsByUser(userId: string, limit = 24, offset = 0): Promise<PublishedGenerationRecord[]> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const safeLimit = Math.max(Number(limit) || 24, 1);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+
+  const [rows] = await db.execute(
+    `SELECT g.*, u.id AS author_id, u.name AS author_name
+     FROM generations g
+     JOIN users u ON u.id = g.user_id
+     WHERE g.user_id = ?
+       AND g.visibility = 'public'
+       AND g.status = 'completed'
+       AND g.result_url IS NOT NULL
+       AND g.result_url != ''
+       AND g.public_share_id IS NOT NULL
+       AND g.public_share_id != ''
+       AND g.type IN (${PUBLIC_SHAREABLE_GENERATION_TYPES_SQL})
+     ORDER BY g.created_at DESC
+     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+    [userId]
+  );
+
+  return (rows as any[]).map(mapPublishedGenerationRow);
+}
+
+export async function getPublishedGenerationsCountByUser(userId: string): Promise<number> {
+  await initializeDatabase();
+  const db = getAdapter();
+
+  const [rows] = await db.execute(
+    `SELECT COUNT(1) AS count
+     FROM generations
+     WHERE user_id = ?
+       AND visibility = 'public'
+       AND status = 'completed'
+       AND result_url IS NOT NULL
+       AND result_url != ''
+       AND public_share_id IS NOT NULL
+       AND public_share_id != ''
+       AND type IN (${PUBLIC_SHAREABLE_GENERATION_TYPES_SQL})`,
+    [userId]
+  );
+
+  return Number((rows as any[])[0]?.count || 0);
 }
 
 // 删除单个生成记录

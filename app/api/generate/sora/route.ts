@@ -19,6 +19,7 @@ import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
 import { fetchExternalBuffer } from '@/lib/safe-fetch';
 import { readMediaFile, isLocalFile } from '@/lib/media-storage';
 import { validateGeneratedMediaUrl } from '@/lib/media-url-validator';
+import { extractGenerationIdFromMediaProxyUrl } from '@/lib/generation-urls';
 
 // 配置路由段选项
 export const maxDuration = 60;
@@ -87,9 +88,8 @@ async function fetchImageAsBase64(imageUrl: string, origin: string): Promise<{ m
   let actualUrl = imageUrl;
 
   // Check if this is an internal /api/media/ URL - fetch directly from database
-  const internalMediaMatch = imageUrl.match(/\/api\/media\/([a-f0-9-]+)/i);
-  if (internalMediaMatch) {
-    const generationId = internalMediaMatch[1];
+  const generationId = extractGenerationIdFromMediaProxyUrl(imageUrl);
+  if (generationId) {
     console.log(`[fetchImageAsBase64] Detected internal media URL, fetching generation ${generationId} from DB`);
 
     const generation = await getGeneration(generationId);

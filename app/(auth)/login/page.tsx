@@ -175,9 +175,9 @@ export default function LoginPage() {
                 </div>
                 <span className="text-sm text-foreground/60 group-hover:text-foreground/80 transition-colors">记住我</span>
               </label>
-              <Link href="/forgot-password" className="text-sm text-foreground/40 hover:text-foreground/60 transition-colors">
-                忘记密码？
-              </Link>
+              <span className="text-sm text-foreground/40">
+                请联系管理员重置密码
+              </span>
             </div>
 
             <Captcha key={captchaKey} onCaptchaChange={handleCaptchaChange} />

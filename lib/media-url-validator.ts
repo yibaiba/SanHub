@@ -40,6 +40,13 @@ function getPathExtension(url: URL): string | null {
   return filename.slice(dotIndex + 1).toLowerCase();
 }
 
+function isKnownMediaExtension(extension: string, expectedType: ExpectedMediaType): boolean {
+  if (expectedType === 'image') {
+    return IMAGE_EXTENSIONS.has(extension);
+  }
+  return VIDEO_EXTENSIONS.has(extension);
+}
+
 function isTypeCompatibleByExtension(extension: string, expectedType: ExpectedMediaType): boolean {
   if (expectedType === 'image') {
     return !VIDEO_EXTENSIONS.has(extension);
@@ -102,6 +109,46 @@ export function validateGeneratedMediaUrl(rawUrl: string, expectedType: Expected
   }
 
   return { valid: true, normalizedUrl };
+}
+
+export function validatePublishableMediaUrl(rawUrl: string, expectedType: ExpectedMediaType): ValidationResult {
+  const validation = validateGeneratedMediaUrl(rawUrl, expectedType);
+  if (!validation.valid) {
+    return validation;
+  }
+
+  const { normalizedUrl } = validation;
+  if (normalizedUrl.startsWith('data:')) {
+    return validation;
+  }
+
+  if (normalizedUrl.startsWith('file:')) {
+    const filename = normalizedUrl.slice('file:'.length).trim();
+    const dotIndex = filename.lastIndexOf('.');
+    if (dotIndex <= 0 || dotIndex === filename.length - 1) {
+      return { valid: false, normalizedUrl, reason: 'Missing file extension for published media' };
+    }
+
+    const extension = filename.slice(dotIndex + 1).toLowerCase();
+    if (!isKnownMediaExtension(extension, expectedType)) {
+      return { valid: false, normalizedUrl, reason: `Unsupported published media extension: .${extension}` };
+    }
+    return validation;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(normalizedUrl);
+  } catch {
+    return { valid: false, normalizedUrl, reason: 'Invalid absolute URL' };
+  }
+
+  const extension = getPathExtension(parsedUrl);
+  if (extension && !isKnownMediaExtension(extension, expectedType)) {
+    return { valid: false, normalizedUrl, reason: `Unsupported published media extension: .${extension}` };
+  }
+
+  return validation;
 }
 
 function normalizeGeneratedText(rawText: unknown): string {

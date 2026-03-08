@@ -64,17 +64,21 @@ export class SQLiteAdapter implements DatabaseAdapter {
   private dbPath: string;
 
   constructor() {
-    this.dbPath = process.env.SQLITE_PATH || './data/sanhub.db';
-    
-    // 确保目录存在
     const fs = require('fs');
     const path = require('path');
+
+    const configuredPath = (process.env.SQLITE_PATH || 'data/sanhub.db').trim();
+    this.dbPath = path.isAbsolute(configuredPath)
+      ? configuredPath
+      : path.resolve(process.cwd(), configuredPath);
+
     const dbDir = path.dirname(this.dbPath);
     if (!fs.existsSync(dbDir)) {
       fs.mkdirSync(dbDir, { recursive: true });
     }
 
-    // 初始化数据库连接
+    console.log('[SQLite] Using database path:', this.dbPath);
+
     const Database = require('better-sqlite3');
     this.db = new Database(this.dbPath);
     this.db.pragma('journal_mode = WAL');
@@ -120,7 +124,8 @@ export class SQLiteAdapter implements DatabaseAdapter {
       const isMigrationError = 
         error?.code === 'SQLITE_ERROR' && 
         (error?.message?.includes('duplicate column name') || 
-         error?.message?.includes('no such column'));
+         error?.message?.includes('no such column') ||
+         error?.message?.includes('already exists'));
       
       // Suppress expected constraint errors (admin already exists, etc.)
       const isConstraintError = 

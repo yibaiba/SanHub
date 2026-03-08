@@ -25,12 +25,17 @@ import {
   AlertCircle,
   Edit3,
   ExternalLink,
+  Globe,
+  Share2,
 } from 'lucide-react';
 import { toast } from '@/components/ui/toaster';
 import type { Generation, CharacterCard } from '@/types';
 import { formatDate, truncate } from '@/lib/utils';
 import { downloadAsset } from '@/lib/download';
 import { IMAGE_MODELS } from '@/lib/model-config';
+import { resolveExpectedMediaType } from '../../../lib/media-url-validator';
+import { buildRawMediaDownloadUrl } from '@/lib/media-download';
+import { buildGenerationSharePath } from '@/lib/generation-urls';
 
 // 任务类型
 interface Task {
@@ -43,8 +48,8 @@ interface Task {
 }
 
 // 纯函数 - 移到组件外部避免重复创建
-const isVideoType = (gen: Generation) => gen.type.includes('video');
-const isTaskVideoType = (type: string) => type?.includes('video');
+const isVideoType = (gen: Generation) => resolveExpectedMediaType(gen.type) === 'video';
+const isTaskVideoType = (type: string) => resolveExpectedMediaType(type || '') === 'video';
 
 const TYPE_BADGE_MAP: Record<string, { label: string; icon: any }> = {
   'sora-video': { label: 'Sora 视频', icon: Video },
@@ -55,6 +60,7 @@ const TYPE_BADGE_MAP: Record<string, { label: string; icon: any }> = {
   'zimage-image': { label: 'Z-Image', icon: ImageIcon },
   'gitee-image': { label: 'Gitee', icon: ImageIcon },
   'character-card': { label: '角色卡', icon: User },
+  'video-capture': { label: '视频截图', icon: ImageIcon },
 };
 
 const IMAGE_MODEL_LABELS = new Map(
@@ -279,6 +285,8 @@ export default function HistoryPage() {
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<'single' | 'batch' | 'all-media' | 'all-characters' | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [shareLoading, setShareLoading] = useState(false);
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const renderMoreRef = useRef<HTMLDivElement>(null);
@@ -286,6 +294,12 @@ export default function HistoryPage() {
   const renderStateRef = useRef({ hasHiddenGenerations: false });
   const pageSize = 50;
   const [visibleCount, setVisibleCount] = useState(RENDER_INITIAL);
+  const canShareSelected = Boolean(selected && selected.visibility === 'public' && selected.publicShareId && selected.status === 'completed' && selected.resultUrl);
+
+  const syncGenerationState = useCallback((generation: Generation) => {
+    setGenerations((prev) => prev.map((item) => (item.id === generation.id ? generation : item)));
+    setSelected((prev) => (prev?.id === generation.id ? generation : prev));
+  }, []);
 
   const loadHistory = useCallback(async (pageNum: number, append = false, force = false) => {
     if (loadingRef.current && !force) return;
@@ -410,6 +424,63 @@ export default function HistoryPage() {
     await poll();
   }, [update]);
 
+  const handleTogglePublishing = useCallback(async () => {
+    if (!selected) return;
+
+    setPublishing(true);
+    try {
+      const method = selected.visibility === 'public' ? 'DELETE' : 'POST';
+      const response = await fetch(`/api/user/generations/${selected.id}/publish`, { method });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || '操作失败');
+      }
+
+      const generation = data.data?.generation as Generation | undefined;
+      if (generation) {
+        syncGenerationState(generation);
+      }
+
+      if (method === 'POST') {
+        toast({ title: '作品已公开', description: data.data?.shareUrl || '现在可以复制分享链接了' });
+      } else {
+        toast({ title: '已取消公开' });
+      }
+    } catch (error) {
+      toast({
+        title: selected.visibility === 'public' ? '取消公开失败' : '公开失败',
+        description: error instanceof Error ? error.message : '未知错误',
+        variant: 'destructive',
+      });
+    } finally {
+      setPublishing(false);
+    }
+  }, [selected, syncGenerationState]);
+
+  const handleCopyShareLink = useCallback(async () => {
+    if (!selected) return;
+
+    setShareLoading(true);
+    try {
+      const response = await fetch(`/api/user/generations/${selected.id}/share`);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || '获取分享链接失败');
+      }
+      await navigator.clipboard.writeText(data.data.url);
+      toast({ title: '已复制分享链接' });
+    } catch (error) {
+      toast({
+        title: '复制分享链接失败',
+        description: error instanceof Error ? error.message : '未知错误',
+        variant: 'destructive',
+      });
+    } finally {
+      setShareLoading(false);
+    }
+  }, [selected]);
+
   const loadPendingTasks = useCallback(async () => {
     try {
       const res = await fetch('/api/user/tasks');
@@ -494,12 +565,9 @@ export default function HistoryPage() {
       return;
     }
 
-    const extension = type.includes('video') ? 'mp4' : 'png';
+    const extension = resolveExpectedMediaType(type) === 'video' ? 'mp4' : 'png';
     try {
-      // Add ?raw=true to force server proxy (avoid CORS issues with 302 redirects)
-      const downloadUrl = url.startsWith('/api/media/') 
-        ? `${url}?raw=true` 
-        : url;
+      const downloadUrl = buildRawMediaDownloadUrl(url);
       await downloadAsset(downloadUrl, `sanhub-${id}.${extension}`);
     } catch (err) {
       console.error('Download failed', err);
@@ -1038,6 +1106,10 @@ export default function HistoryPage() {
                     <span className="px-2 py-0.5 bg-card/70 text-foreground/60 text-xs rounded">
                       {getGenerationBadge(selected).label}
                     </span>
+                    <span className={`px-2 py-0.5 text-xs rounded inline-flex items-center gap-1 ${selected.visibility === 'public' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-card/70 text-foreground/50'}`}>
+                      <Globe className="w-3 h-3" />
+                      {selected.visibility === 'public' ? '已公开' : '私密'}
+                    </span>
                   </div>
                   <div className="mt-3 space-y-2">
                     <div className="flex items-start gap-2">
@@ -1056,6 +1128,37 @@ export default function HistoryPage() {
                         </button>
                       )}
                     </div>
+
+                    {canShareSelected && (
+                      <div className="flex items-start gap-2">
+                        <span className="text-foreground/40 text-xs shrink-0 w-14">分享</span>
+                        <a
+                          href={buildGenerationSharePath(selected.publicShareId!)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-foreground/70 text-xs break-all flex-1 hover:text-foreground underline underline-offset-2"
+                        >
+                          {buildGenerationSharePath(selected.publicShareId!)}
+                        </a>
+                        <button
+                          onClick={handleCopyShareLink}
+                          className="shrink-0 p-1.5 text-foreground/40 hover:text-foreground/80 hover:bg-card/70 rounded-lg transition-colors disabled:opacity-40"
+                          title="复制分享链接"
+                          disabled={shareLoading}
+                        >
+                          {shareLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
+                        </button>
+                        <a
+                          href={buildGenerationSharePath(selected.publicShareId!)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="shrink-0 p-1.5 text-foreground/40 hover:text-foreground/80 hover:bg-card/70 rounded-lg transition-colors"
+                          title="打开公开页"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                      </div>
+                    )}
 
                     {typeof selected.params?.permalink === 'string' && selected.params.permalink && (
                       <div className="flex items-start gap-2">
@@ -1091,7 +1194,25 @@ export default function HistoryPage() {
                     )}
                   </div>
                 </div>
-                <div className="flex gap-2 shrink-0 w-full md:w-auto">
+                <div className="flex flex-wrap gap-2 shrink-0 w-full md:w-auto">
+                  <button
+                    onClick={handleTogglePublishing}
+                    disabled={publishing}
+                    className={`flex-1 md:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl transition-colors text-sm font-medium ${selected.visibility === 'public' ? 'bg-card/70 text-foreground border border-border/70 hover:bg-card/80' : 'bg-emerald-500 text-foreground hover:bg-emerald-600'} disabled:opacity-50`}
+                  >
+                    {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+                    {selected.visibility === 'public' ? '取消公开' : '公开作品'}
+                  </button>
+                  {canShareSelected && (
+                    <button
+                      onClick={handleCopyShareLink}
+                      disabled={shareLoading}
+                      className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 bg-card/70 text-foreground border border-border/70 rounded-xl hover:bg-card/80 transition-colors text-sm font-medium disabled:opacity-50"
+                    >
+                      {shareLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
+                      复制分享
+                    </button>
+                  )}
                   <button
                     onClick={() => downloadFile(selected.resultUrl, selected.id, selected.type)}
                     className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 bg-foreground text-background rounded-xl hover:opacity-90 transition-colors text-sm font-medium"

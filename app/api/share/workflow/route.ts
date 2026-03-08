@@ -18,6 +18,16 @@ export async function POST(req: NextRequest) {
     }
 
     const db = getAdapter();
+
+    const [workspaceRows] = await db.execute('SELECT user_id FROM workspaces WHERE id = ?', [workspaceId]);
+    const workspace = (workspaceRows as any[])[0];
+    if (!workspace) {
+      return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
+    }
+    if (workspace.user_id !== session.user.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const shareId = generateId();
     const now = Date.now();
 

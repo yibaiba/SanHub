@@ -7,6 +7,7 @@ import {
 } from '@/lib/workflow-engine';
 import { WorkspaceNode, WorkspaceEdge, SafeImageModel, SafeVideoModel, ChatModel } from '@/types';
 import { executeNodeAPI } from '../lib/node-execution';
+import { getNodeOutputUpdates } from '../lib/node-output';
 
 interface UseWorkflowEngineProps {
   workspaceId: string;
@@ -70,14 +71,10 @@ export function useWorkflowEngine({
           updates.progress = state.progress;
         }
 
-        if (state.output) {
-          if (typeof state.output === 'string' && (state.output.startsWith('http') || state.output.startsWith('data:'))) {
-            updates.outputUrl = state.output;
-            if (state.output.endsWith('.mp4')) updates.outputType = 'video';
-            else updates.outputType = 'image';
-          } else if (typeof state.output === 'string') {
-            updates.chatOutput = state.output;
-            updates.templateOutput = state.output;
+        if (state.output !== undefined) {
+          const node = nodesRef.current.find((item) => item.id === nodeId);
+          if (node) {
+            Object.assign(updates, getNodeOutputUpdates(node.type, state.output));
           }
         }
 

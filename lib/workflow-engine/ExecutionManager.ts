@@ -357,9 +357,29 @@ export class ExecutionManager implements IExecutionManager {
     throw new Error("triggerCascade requires workspaceId context");
   }
 
+  private async areUpstreamNodesCompleted(workspaceId: string, nodeId: string, edges: WorkspaceEdge[]): Promise<boolean> {
+    const upstreamIds = this.resolver.getUpstreamNodes(nodeId, edges);
+    if (upstreamIds.length === 0) {
+      return true;
+    }
+
+    const wsState = await this.stateManager.getExecutionState(workspaceId);
+    return upstreamIds.every((parentId) => wsState.nodeStates.get(parentId)?.status === 'completed');
+  }
+
   private async triggerCascadeInternal(workspaceId: string, nodeId: string, nodes: WorkspaceNode[], edges: WorkspaceEdge[]) {
     const downstream = this.resolver.getDownstreamNodes(nodeId, edges);
     for (const childId of downstream) {
+      if (!(await this.areUpstreamNodesCompleted(workspaceId, childId, edges))) {
+        continue;
+      }
+
+      const wsState = await this.stateManager.getExecutionState(workspaceId);
+      const childState = wsState.nodeStates.get(childId);
+      if (childState?.status === 'running' || childState?.status === 'waiting') {
+        continue;
+      }
+
       await this.executeNodeInWorkspace(workspaceId, childId, { cascadeEnabled: true });
     }
   }

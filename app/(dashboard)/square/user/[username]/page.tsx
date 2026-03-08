@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
+  Copy,
   Loader2,
   Play,
   Heart,
@@ -15,7 +16,9 @@ import {
   X,
   Download,
 } from 'lucide-react';
+import { toast } from '@/components/ui/toaster';
 import { cn } from '@/lib/utils';
+import { buildCommunityMediaProxyUrl, inferDownloadExtension } from '../../../../../lib/media-download';
 
 interface Profile {
   user_id: string;
@@ -239,13 +242,11 @@ export default function UserProfilePage() {
     if (!selectedVideo?.attachment?.downloadable_url) return;
 
     const url = selectedVideo.attachment.downloadable_url;
-    const pathname = url.split('?')[0];
-    const ext = pathname.includes('.') ? pathname.split('.').pop() || '' : '';
-    const fallbackExt = selectedVideo.attachment.kind?.includes('video') ? 'mp4' : 'png';
-    const filename = `sanhub-${selectedVideo.id}.${ext || fallbackExt}`;
+    const extension = inferDownloadExtension(url, selectedVideo.attachment.kind);
+    const filename = `sanhub-${selectedVideo.id}.${extension}`;
 
     try {
-      const response = await fetch(url);
+      const response = await fetch(buildCommunityMediaProxyUrl(url, selectedVideo.attachment.kind));
       if (!response.ok) throw new Error('Download failed');
 
       const blob = await response.blob();
@@ -259,6 +260,25 @@ export default function UserProfilePage() {
       URL.revokeObjectURL(blobUrl);
     } catch (err) {
       console.error('Download failed', err);
+    }
+  }, [selectedVideo]);
+
+  const handleCopyPrompt = useCallback(async () => {
+    const text = selectedVideo?.text?.trim();
+    if (!text) {
+      toast({ title: '没有可复制的提示词', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: '已复制提示词' });
+    } catch (error) {
+      toast({
+        title: '复制失败',
+        description: error instanceof Error ? error.message : '无法复制提示词',
+        variant: 'destructive',
+      });
     }
   }, [selectedVideo]);
 
@@ -404,6 +424,15 @@ export default function UserProfilePage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyPrompt}
+                  disabled={!selectedVideo.text?.trim()}
+                  className="p-2 rounded-lg bg-card/70 hover:bg-card/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="复制提示词"
+                >
+                  <Copy className="w-5 h-5 text-foreground" />
+                </button>
                 <button
                   type="button"
                   onClick={handleDownload}

@@ -6,6 +6,7 @@ import { getGeneration } from '@/lib/db';
 import { readMediaFile, isLocalFile } from '@/lib/media-storage';
 import { getVideoContentUrl } from '@/lib/sora-api';
 import { fetchExternalBuffer, resolveAndValidateUrl } from '@/lib/safe-fetch';
+import { resolveExpectedMediaType, type ExpectedMediaType } from '../../../../lib/media-url-validator';
 
 // 媒体文件服务端点
 // 支持多种存储方式：
@@ -38,6 +39,11 @@ export async function GET(
       return new NextResponse('Forbidden', { status: 403 });
     }
     
+    const expectedMediaType = resolveExpectedMediaType(generation.type);
+    if (!expectedMediaType) {
+      return new NextResponse('Unsupported media type', { status: 400 });
+    }
+
     let resultUrl = generation.resultUrl;
     const videoId = typeof generation.params?.videoId === 'string' ? generation.params.videoId : undefined;
     const videoChannelId =
@@ -100,7 +106,7 @@ export async function GET(
 
       // 对于视频和图片，直接重定向到外部 URL（避免代理大文件及减少服务器带宽消耗）
       // 但如果请求明确要求 raw 数据（前端需要处理文件流），则不重定向
-      if (!forceRaw && (generation.type.includes('video') || generation.type.includes('image'))) {
+      if (!forceRaw) {
         const redirectResponse = NextResponse.redirect(safeUrl.toString(), 302);
         // Cache redirect response for 30 days
         redirectResponse.headers.set('Cache-Control', 'private, max-age=2592000, immutable');
@@ -108,7 +114,7 @@ export async function GET(
         return redirectResponse;
       }
       // 对于其他类型，代理请求
-      return await proxyExternalUrl(safeUrl.toString(), generation.type, origin);
+      return await proxyExternalUrl(safeUrl.toString(), expectedMediaType, origin);
     }
     
     // 3. Base64 data URL
@@ -130,9 +136,9 @@ export async function GET(
 }
 
 // Proxy external URL when raw data is needed (e.g., for client-side processing)
-async function proxyExternalUrl(url: string, type: string, origin: string): Promise<NextResponse> {
+async function proxyExternalUrl(url: string, expectedMediaType: ExpectedMediaType, origin: string): Promise<NextResponse> {
   try {
-    const maxBytes = type.includes('video') ? 100 * 1024 * 1024 : 20 * 1024 * 1024; // 100MB for video, 20MB for image
+    const maxBytes = expectedMediaType === 'video' ? 100 * 1024 * 1024 : 20 * 1024 * 1024; // 100MB for video, 20MB for image
     const { buffer, contentType } = await fetchExternalBuffer(url, {
       origin,
       allowRelative: false,
@@ -144,8 +150,8 @@ async function proxyExternalUrl(url: string, type: string, origin: string): Prom
     });
 
     // Validate content type matches expected media type
-    const isValidImage = type.includes('image') && contentType.startsWith('image/');
-    const isValidVideo = type.includes('video') && contentType.startsWith('video/');
+    const isValidImage = expectedMediaType === 'image' && contentType.startsWith('image/');
+    const isValidVideo = expectedMediaType === 'video' && contentType.startsWith('video/');
     
     if (!isValidImage && !isValidVideo) {
       return new NextResponse('Content type mismatch', { status: 415 });

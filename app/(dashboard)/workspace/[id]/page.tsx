@@ -17,6 +17,8 @@ import {
 import { useWorkflowEngine } from '@/components/workspace/hooks/useWorkflowEngine';
 import { useParamHighlight } from '@/components/workspace/hooks/useParamHighlight';
 import { getInheritableParams, formatSyncMessage } from '@/components/workspace/lib/param-inheritance';
+import { buildWorkspaceChatRequestBody } from '@/components/workspace/lib/chat-request';
+import { resolveExpectedMediaType } from '../../../../lib/media-url-validator';
 import {
   Check,
   CheckCircle2,
@@ -143,54 +145,6 @@ function tryParseStoryboard(text: string): StoryboardData | null {
   } catch {
     return null;
   }
-}
-
-// Get storyboard director system prompt
-function getStoryboardSystemPrompt(): string {
-  return `You are a professional film director and storyboard artist.
-Please convert the user's story or description into a structured storyboard list.
-
-IMPORTANT: Analyze the content and recommend the best frame_mode:
-- "first_frame": Only generate first frame for each scene (fast, good for prototyping)
-- "first_last": Generate first and last frame (good for transitions and motion control)
-- "keyframes": Generate multiple keyframes based on scene complexity (best quality, slower)
-
-Output MUST be a valid JSON object with the following structure:
-{
-  "title": "Project title based on content",
-  "frame_mode": "first_frame | first_last | keyframes",
-  "metadata": {
-    "total_duration": "estimated total duration",
-    "style": "visual style description",
-    "genre": "content genre"
-  },
-  "scenes": [
-    {
-      "id": 1,
-      "visual_prompt": "Detailed image generation prompt for the scene (English, highly descriptive for AI image generators)",
-      "video_prompt": "Motion description focusing on camera movement and subject action (English)",
-      "duration": "5s",
-      "aspect_ratio": "16:9",
-      "shot_type": "wide_shot | medium_shot | close_up | extreme_close_up | over_shoulder | pov",
-      "frame_role": "keyframe | first_frame | last_frame | storyboard_only",
-      "characters": ["list of character names appearing in this scene"],
-      "location": "scene location description",
-      "dialogue": "any dialogue in this scene (optional)",
-      "mood": "emotional atmosphere (e.g., tense, joyful, melancholic)",
-      "transition": "transition to next scene (cut, fade, dissolve, wipe)"
-    }
-  ]
-}
-
-Guidelines:
-- visual_prompt should be highly descriptive, including lighting, color palette, composition
-- video_prompt should focus on motion and camera work
-- Use "frame_role": "storyboard_only" for static reference shots
-- Use "frame_role": "first_frame" for scenes that will be animated
-- Use "frame_role": "last_frame" for ending frames when frame_mode is "first_last"
-- characters array helps track consistency across scenes
-- location helps maintain scene continuity
-- Do not output anything else except the JSON.`;
 }
 
 const CHAT_MAX_LENGTH = 2000;
@@ -1551,7 +1505,7 @@ ${storyContext}
             updateNodeData(nodeId, {
               status: 'completed',
               outputUrl: resultUrl,
-              outputType: data.data.type?.includes('video') ? 'video' : 'image',
+              outputType: resolveExpectedMediaType(data.data.type || '') === 'video' ? 'video' : 'image',
               generationId: data.data.id,
               revisedPrompt: data.data.params?.revised_prompt,
               errorMessage: undefined,
@@ -1836,11 +1790,6 @@ ${storyContext}
       return;
     }
 
-    // Pure Mode: Append system instruction
-    if (node.data.pureMode) {
-      prompt = `${prompt}\n\n(IMPORTANT: Output ONLY the resulting prompt text. Do not include any conversational filler, intro, outro, or explanations. Just the raw prompt.)`;
-    }
-
     // Check if model supports vision when images are provided
     const selectedModel = chatModels.find((m) => m.id === node.data.chatModelId);
     if (inputImages.length > 0 && selectedModel && !selectedModel.supportsVision) {
@@ -1851,21 +1800,7 @@ ${storyContext}
     updateNodeData(node.id, { status: 'pending', errorMessage: undefined, inputImages });
 
     try {
-      // Build request body with optional storyboard mode support
-      const requestBody: Record<string, unknown> = {
-        modelId: node.data.chatModelId,
-        prompt,
-        images: inputImages,
-      };
-
-      // If storyboard mode is enabled, add system prompt and conversation history
-      if (node.data.storyboardMode) {
-        requestBody.systemPrompt = getStoryboardSystemPrompt();
-        // Include previous messages for multi-turn conversation
-        if (node.data.chatMessages && node.data.chatMessages.length > 0) {
-          requestBody.history = node.data.chatMessages;
-        }
-      }
+      const requestBody = buildWorkspaceChatRequestBody(node, prompt, inputImages, node.data.chatModelId);
 
       const res = await fetch('/api/chat/workspace', {
         method: 'POST',

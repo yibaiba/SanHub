@@ -7,6 +7,8 @@ import type { Generation } from '@/types';
 import { formatDate, truncate } from '@/lib/utils';
 import { downloadAsset } from '@/lib/download';
 import { toast } from '@/components/ui/toaster';
+import { resolveExpectedMediaType } from '../../lib/media-url-validator';
+import { buildRawMediaDownloadUrl } from '@/lib/media-download';
 
 import { UpscaleControl } from './UpscaleControl';
 import { CaptureButton, CapturePreviewDialog } from '@/components/video';
@@ -234,12 +236,9 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
       return;
     }
 
-    const extension = type.includes('video') ? 'mp4' : 'png';
+    const extension = resolveExpectedMediaType(type) === 'video' ? 'mp4' : 'png';
     try {
-      // Add ?raw=true to force server proxy (avoid CORS issues with 302 redirects)
-      const downloadUrl = url.startsWith('/api/media/') 
-        ? `${url}?raw=true` 
-        : url;
+      const downloadUrl = buildRawMediaDownloadUrl(url);
       await downloadAsset(downloadUrl, `sanhub-${id}.${extension}`);
     } catch (err) {
       console.error('Download failed', err);
@@ -299,8 +298,8 @@ export function ResultGallery({ generations, tasks = [], onRemoveTask, onRestore
     setDeleteTarget(null);
   };
 
-  const isVideo = (gen: Generation) => gen.type.includes('video');
-  const isTaskVideo = (task: Task) => task.type?.includes('video') || task.model?.includes('video');
+  const isVideo = (gen: Generation) => resolveExpectedMediaType(gen.type) === 'video';
+  const isTaskVideo = (task: Task) => resolveExpectedMediaType(task.type || task.model || '') === 'video';
 
   // 过滤出正在进行的任务（不包括已完成的，已完成的会在 generations 中显示）
   // 同时排除已经存在于 generations 中的任务（通过 id 匹配）

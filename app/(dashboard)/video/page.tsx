@@ -1,6 +1,7 @@
-﻿'use client';
+'use client';
 /* eslint-disable @next/next/no-img-element */
 
+import React from 'react';
 import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import { useSession } from 'next-auth/react';
 import dynamic from 'next/dynamic';
@@ -22,8 +23,11 @@ import {
 } from 'lucide-react';
 import { cn, fileToBase64 } from '@/lib/utils';
 import { toast } from '@/components/ui/toaster';
+import { resolveExpectedMediaType } from '../../../lib/media-url-validator';
+import { buildGenerationMediaProxyPath } from '@/lib/generation-urls';
 import { MagicWand } from '@/components/generator/MagicWand';
 import { formatVideoError } from '@/lib/error-formatter';
+import { buildRawMediaDownloadUrl } from '@/lib/media-download';
 import type { Task } from '@/components/generator/result-gallery';
 import type { Generation, CharacterCard, SafeVideoModel, DailyLimitConfig } from '@/types';
 
@@ -98,7 +102,7 @@ export default function VideoGenerationPage() {
       if (res.ok) {
         const data = await res.json();
         const images = (data.data || []).filter(
-          (g: Generation) => g.type.includes('image') || g.type === 'sora-image' || g.type === 'flow-image' || g.type === 'video-capture'
+          (g: Generation) => resolveExpectedMediaType(g.type) === 'image'
         );
         setImageLibrary(images);
       }
@@ -144,7 +148,7 @@ export default function VideoGenerationPage() {
       }
 
       // Download image with cache support
-      const response = await fetch(`/api/media/${generation.id}?raw=true`, {
+      const response = await fetch(buildRawMediaDownloadUrl(buildGenerationMediaProxyPath(generation.id)), {
         cache: 'force-cache', // Use browser cache if available
       });
       if (!response.ok) {
@@ -2095,7 +2099,7 @@ export default function VideoGenerationPage() {
                         }}
                       >
                         <img
-                          src={`/api/media/${gen.id}`}
+                          src={buildGenerationMediaProxyPath(gen.id)}
                           alt={gen.prompt || ''}
                           className="w-full h-full object-cover"
                           loading="lazy"
@@ -2127,7 +2131,7 @@ export default function VideoGenerationPage() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              setPreviewImage(`/api/media/${gen.id}`);
+                              setPreviewImage(buildGenerationMediaProxyPath(gen.id));
                             }}
                             className="p-1.5 bg-black/70 backdrop-blur-sm rounded hover:bg-black/90 transition-colors"
                             title="查看大图"

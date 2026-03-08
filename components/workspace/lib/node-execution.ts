@@ -1,10 +1,22 @@
 import { WorkspaceNode, SafeImageModel, SafeVideoModel, ChatModel } from '@/types';
 import { NodeExecutionContext, RetryConfig, DEFAULT_RETRY_CONFIG } from '@/lib/workflow-engine/types';
+import { buildWorkspaceChatRequestBody } from './chat-request';
 
 export interface ExecutionContext {
   imageModels: SafeImageModel[];
   videoModels: SafeVideoModel[];
   chatModels: ChatModel[];
+}
+
+export function isWorkflowMediaInput(value: string): boolean {
+  return (
+    value.startsWith('/api/media/') ||
+    value.startsWith('http://') ||
+    value.startsWith('https://') ||
+    value.startsWith('data:image/') ||
+    value.startsWith('data:video/') ||
+    value.startsWith('file:')
+  );
 }
 
 // ========================================
@@ -124,7 +136,7 @@ export async function executeNodeAPI(
 
   for (const val of inputValues) {
     if (typeof val === 'string') {
-      if (val.startsWith('http') || val.startsWith('data:image')) {
+      if (isWorkflowMediaInput(val)) {
         imageInputs.push(val);
       } else {
         textInputs.push(val);
@@ -261,17 +273,21 @@ async function executeChatNode(
   models: ChatModel[],
   execContext?: NodeExecutionContext
 ) {
+  const model = models.find(m => m.id === node.data.chatModelId) || models[0];
+  if (!model) throw new Error('No chat model available');
+  if (imageInputs.length > 0 && !model.supportsVision) {
+    throw new Error('该模型不支持图片输入');
+  }
+
+  const requestBody = buildWorkspaceChatRequestBody(node, prompt, imageInputs, model.id);
+
   // 使用重试包装器
   const data = await withRetry(
     async () => {
       const response = await fetch('/api/chat/workspace', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          modelId: node.data.chatModelId,
-          prompt,
-          images: imageInputs,
-        }),
+        body: JSON.stringify(requestBody),
         signal: execContext?.abortSignal,
       });
 

@@ -4,7 +4,10 @@ import { useRef, useState } from 'react';
 import { Upload, Trash2, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui/toaster';
+import { buildRawMediaDownloadUrl } from '@/lib/media-download';
 import type { Generation } from '@/types';
+import { resolveExpectedMediaType } from '../../../../lib/media-url-validator';
+import { buildGenerationMediaProxyPath } from '@/lib/generation-urls';
 
 type VideoEngine = 'sora' | 'veo';
 type Veo3Mode = 't2v' | 'i2v' | 'r2v';
@@ -52,7 +55,7 @@ export function ReferenceImageUploader({
         const data = await res.json();
         const images = (data.data || []).filter(
           (g: Generation) =>
-            g.type.includes('image') || g.type === 'sora-image' || g.type === 'flow-image'
+            resolveExpectedMediaType(g.type) === 'image'
         );
         setImageLibrary(images);
       }
@@ -89,7 +92,7 @@ export function ReferenceImageUploader({
         return;
       }
 
-      const response = await fetch(`/api/media/${generation.id}?raw=true`, {
+      const response = await fetch(buildRawMediaDownloadUrl(buildGenerationMediaProxyPath(generation.id)), {
         cache: 'force-cache', // Use browser cache if available
       });
       if (!response.ok) {
