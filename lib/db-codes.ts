@@ -100,6 +100,18 @@ export async function initializeCodesTables(): Promise<void> {
   tablesInitialized = true;
 }
 
+function getAffectedRows(result: unknown, meta: unknown): number {
+  const fromResult =
+    Number((result as any)?.affectedRows ?? (result as any)?.changes ?? 0);
+  if (fromResult > 0) return fromResult;
+
+  const fromMeta =
+    Number((meta as any)?.affectedRows ?? (meta as any)?.changes ?? 0);
+  if (fromMeta > 0) return fromMeta;
+
+  return 0;
+}
+
 // ========================================
 // Invite code functions
 // ========================================
@@ -235,12 +247,12 @@ export async function applyInviteCode(code: string, userId: string): Promise<{ s
   const now = Date.now();
   
   // Use atomic update with WHERE condition to prevent race condition
-  const [result] = await db.execute(
+  const [result, meta] = await db.execute(
     'UPDATE invite_codes SET used_by = ?, used_at = ? WHERE id = ? AND used_by IS NULL',
     [userId, now, invite.id]
   );
   
-  const affected = (result as any).affectedRows ?? (result as any).changes ?? 0;
+  const affected = getAffectedRows(result, meta);
   if (affected === 0) {
     return { success: false, error: '邀请码已被使用' };
   }
@@ -339,8 +351,8 @@ export async function deleteInviteCode(id: string): Promise<boolean> {
   await initializeCodesTables();
   const db = getAdapter();
 
-  const [result] = await db.execute('DELETE FROM invite_codes WHERE id = ?', [id]);
-  const affected = (result as any).affectedRows ?? (result as any).changes ?? 0;
+  const [result, meta] = await db.execute('DELETE FROM invite_codes WHERE id = ?', [id]);
+  const affected = getAffectedRows(result, meta);
   return affected > 0;
 }
 
@@ -442,12 +454,12 @@ export async function redeemCode(code: string, userId: string): Promise<{ succes
   const now = Date.now();
   
   // Use atomic update with WHERE condition to prevent race condition
-  const [result] = await db.execute(
+  const [result, meta] = await db.execute(
     'UPDATE redemption_codes SET used_by = ?, used_at = ? WHERE id = ? AND used_by IS NULL',
     [userId, now, redemption.id]
   );
   
-  const affected = (result as any).affectedRows ?? (result as any).changes ?? 0;
+  const affected = getAffectedRows(result, meta);
   if (affected === 0) {
     return { success: false, error: '卡密已被使用' };
   }
@@ -523,8 +535,8 @@ export async function deleteRedemptionCode(id: string): Promise<boolean> {
   await initializeCodesTables();
   const db = getAdapter();
 
-  const [result] = await db.execute('DELETE FROM redemption_codes WHERE id = ?', [id]);
-  const affected = (result as any).affectedRows ?? (result as any).changes ?? 0;
+  const [result, meta] = await db.execute('DELETE FROM redemption_codes WHERE id = ?', [id]);
+  const affected = getAffectedRows(result, meta);
   return affected > 0;
 }
 
@@ -532,8 +544,8 @@ export async function deleteRedemptionCodesByBatch(batchId: string): Promise<num
   await initializeCodesTables();
   const db = getAdapter();
 
-  const [result] = await db.execute('DELETE FROM redemption_codes WHERE batch_id = ? AND used_by IS NULL', [batchId]);
-  return (result as any).affectedRows ?? (result as any).changes ?? 0;
+  const [result, meta] = await db.execute('DELETE FROM redemption_codes WHERE batch_id = ? AND used_by IS NULL', [batchId]);
+  return getAffectedRows(result, meta);
 }
 
 // ========================================
@@ -756,7 +768,7 @@ export async function adminDeleteGeneration(id: string): Promise<boolean> {
   await initializeCodesTables();
   const db = getAdapter();
 
-  const [result] = await db.execute('DELETE FROM generations WHERE id = ?', [id]);
-  const affected = (result as any).affectedRows ?? (result as any).changes ?? 0;
+  const [result, meta] = await db.execute('DELETE FROM generations WHERE id = ?', [id]);
+  const affected = getAffectedRows(result, meta);
   return affected > 0;
 }

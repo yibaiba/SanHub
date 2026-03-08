@@ -13,7 +13,7 @@ import {
   LayoutGrid,
   Workflow,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, formatDate } from '@/lib/utils';
 import type { SafeUser } from '@/types';
 import { useSiteConfig } from '@/components/providers/site-config-provider';
 
@@ -52,17 +52,8 @@ const statusColorMap: Record<GenerationStatus, string> = {
   cancelled: 'bg-zinc-400',
 };
 
-function formatDuration(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const parts: string[] = [];
-
-  if (hours > 0) parts.push(`${hours}小时`);
-  if (minutes > 0 || hours > 0) parts.push(`${minutes}分钟`);
-  parts.push(`${seconds}秒`);
-  return parts.join(' ');
+function formatShortDateTime(timestamp: number): string {
+  return formatDate(timestamp).replace(/^\d{4}\//, '');
 }
 
 function formatRelativeTime(timestamp: number | null): string {
@@ -74,11 +65,22 @@ function formatRelativeTime(timestamp: number | null): string {
   return `${Math.floor(deltaMs / (24 * 60 * 60_000))}天前`;
 }
 
+function getTaskTimeMeta(task: VideoTaskStatus): { label: string; timestamp: number | null } {
+  const isPending = task.status === 'pending';
+  const timestamp = isPending ? task.createdAt || task.updatedAt : task.updatedAt || task.createdAt;
+
+  return {
+    label: isPending ? '创建于' : '更新于',
+    timestamp: timestamp || null,
+  };
+}
+
 const navItems = [
   { href: '/image', icon: Image, label: '图像生成', description: 'Gemini / Z-Image', badge: 'AI', isAI: true },
   { href: '/video', icon: Video, label: '视频生成', description: 'Sora / Remix / 分镜', badge: 'AI', isAI: true },
   { href: '/workspace', icon: Workflow, label: '工作空间', description: '节点工作流', badge: 'BETA', isAI: true },
   { href: '/video/character-card', icon: User, label: '角色卡生成', description: '从视频提取角色', badge: 'NEW', isAI: true },
+  { href: '/gallery', icon: LayoutGrid, label: '作品广场', description: '浏览公开作品', badge: 'NEW', isAI: false },
   { href: '/square', icon: LayoutGrid, label: '广场', description: '探索社区创作', badge: 'HOT', isAI: false },
   { href: '/history', icon: History, label: '历史', description: '作品记录', badge: null, isAI: false },
   { href: '/settings', icon: Settings, label: '设置', description: '账号管理', badge: null, isAI: false },
@@ -111,7 +113,7 @@ export function Sidebar({ user }: SidebarProps) {
 
   const fetchVideoTasks = useCallback(async () => {
     try {
-      const res = await fetch('/api/status/video', { cache: 'no-store' });
+      const res = await fetch('/api/user/status', { cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
       const payload = data?.data;
@@ -258,16 +260,19 @@ export function Sidebar({ user }: SidebarProps) {
                 videoTasks.map((task) => {
                   const statusLabel = statusLabelMap[task.status] ?? '未知';
                   const statusColor = statusColorMap[task.status] ?? 'bg-zinc-400';
-                  const durationMs = typeof task.durationMs === 'number' ? task.durationMs : task.elapsedMs;
+                  const timeMeta = getTaskTimeMeta(task);
                   return (
-                    <div key={task.id} className="flex items-center justify-between text-[11px] text-foreground/70">
+                    <div key={task.id} className="flex items-center justify-between gap-3 text-[11px] text-foreground/70">
                       <div className="flex items-center gap-2">
                         <span className={cn('h-1.5 w-1.5 rounded-full', statusColor)} />
                         <span className="text-[10px] uppercase tracking-wide">{statusLabel}</span>
                       </div>
-                      <span className="text-foreground/50">
-                        {typeof durationMs === 'number' ? formatDuration(durationMs) : '--'}
-                      </span>
+                      <div className="text-right text-[10px] leading-tight text-foreground/50">
+                        <div>{timeMeta.label} {formatRelativeTime(timeMeta.timestamp)}</div>
+                        <div className="text-foreground/35">
+                          {timeMeta.timestamp ? formatShortDateTime(timeMeta.timestamp) : '--'}
+                        </div>
+                      </div>
                     </div>
                   );
                 })
